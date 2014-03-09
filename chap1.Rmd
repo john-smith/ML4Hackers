@@ -1,0 +1,323 @@
+# chapter1
+## パッケージ読み込み
+```{r}
+library(tm)
+# requireは結果をTRUE/FALSEで返す
+print(require(XML))
+```
+
+## パッケージインストール
+パッケージは一度インストールすればいいため、コメントアウトしてある
+
+```{r}
+# 依存パッケージも含める
+# 常にTにしておいた方がいい
+#install.packages("tm", dependencies=TRUE)
+
+# ダウンロードしたソースからインストール
+# ワーキングディレクトリの変更でダウンロードしたディレクトリに移動
+#setwd("~/Downloads")
+#install.packages("RCurl_1.5-0.tar.gz", 
+#                 repos=NULL,    # CRANリポジトリを使わない
+#                 type="source") # ソースからインストールを指定
+```
+
+## UFO
+### ライブラリ読み込み
+```{r}
+library(ggplot2)
+library(plyr)
+library(scales) 
+```
+
+### ヘルプの参照方法
+```{r}
+# ?<関数名>
+# ヘルプファイルにアクセス
+?read.delim
+
+# ??<パッケージ名>::<関数名>
+# パッケージ内から特定のキーワードで検索
+??base::delim
+
+# すべてのヘルプファイルからキーワード検索
+help.search("delimited")
+
+# R Site Search
+# web上のヘルプファイル、メーリングリストアーカイブから検索
+# Rの詳細や関数の説明そのものなどが記載されている訳ではない
+#RSiteSearch("parsing test")
+```
+RSiteSearchは毎回ブラウザで開くのでコメントアウト
+
+### ファイル読み込み
+read.delimを使ってtsvファイルを読み込む  
+read.*系の関数はファイル中の文字列をデフォルトでfactor型として読み込む  
+
+factor(因子)はカテゴリカルデータを扱う際に利用する  
+水準として扱うもので表示上は文字列、内部では整数として扱われる
+
+```{r}
+ufo <- read.delim("data/ufo_awesome.tsv", # 読み込むファイル
+                  sep = "\t",             # ファイルで使用されている区切り文字
+                  stringsAsFactors = F,   # 文字列をfactorとして扱うか
+                  header = F,             # ファイルのヘッダの有無
+                  na.string = "")         # 欠損値(NA)に入れる文字列
+
+# データの確認
+# サイズが大きいため、すべてを出力はしない
+head(ufo)
+```
+
+### データにヘッダを追加
+データ内のどの列が何をさしているのかわかりづらくなるため、  
+列名などはわかりやすい名前を付けておくとよい  
+
+data frameの場合、名前でアクセスするのにも便利
+
+```{r}
+names(ufo) <- c("DateOccurred", "DateReported", "Location", 
+                "ShortDescription", "Duration", "LongDescription")
+```
+
+### 日付の変換
+YYYYMMDDの文字列を日付データに変換する
+```{r}
+# フォーマットを指定してDate型に変換
+# ここでは異常値があるためエラーが出る
+ufo$DateOccurred <- as.Date(ufo$DateOccurred, format = "%Y%m%d") 
+```
+
+### エラー処理
+```{r echo=FALSE}
+as.Date(ufo$DateOccurred, format = "%Y%m%d") 
+```
+
+`r nchar("YYYYMMDD")`より長い文字があるようなので、文字数が違うものを探す
+
+```{r}
+# DateOccurred, DateReportedが8文字でないものを表示
+# ncharで文字数カウント(日本語可)
+# 添字に条件式を使うことでtrueの項目のみを抜きだせる
+head(ufo[which(nchar(ufo$DateOccurred) != 8 | nchar(ufo$DateReported) != 8), 1:2])
+# ifelse
+#  ベクトルに対してまとめて条件判定
+#  trueの項目には第2引数の処理、falseの項目には第3引数の処理を行う
+# ここでは8文字のもののみ、trueを返したベクトルを作る
+good.rows <- ifelse(nchar(ufo$DateOccurred) != 8 | nchar(ufo$DateReported) != 8, FALSE, TRUE)
+head(good.rows)
+# おかしなデータの行数をカウント
+# sum(!good.rows) #sumでtrueの数をカウントできる
+length(which(!good.rows))
+
+#不正なデータが入ってない状態にする
+head(ufo[good.rows, ])
+ufo <- ufo[good.rows, ]
+```
+
+不正データを処理したので再度日付データへ変換
+```{r}
+ufo$DateOccurred <- as.Date(ufo$DateOccurred, format = "%Y%m%d")
+ufo$DateReported <- as.Date(ufo$DateReported, format = "%Y%m%d")
+
+# 変なデータが紛れ込んでるので削除
+ufo[is.na(ufo$DateOccurred) | is.na(ufo$DateReported), ]
+ufo <- ufo[!is.na(ufo$DateOccurred) & !is.na(ufo$DateReported), ]
+
+head(ufo)
+```
+
+##  ロケーションの整理
+場所の情報は「都市名, 州名」になっている
+```{r}
+head(ufo[, 3])
+```
+
+都市名と州名を別々の項目として取り出す
+```{r}
+# ufoデータの1行ごとに都市名、州名を分解してvectorで返す関数
+get.location <- function(l) {
+  # tryCatchで例外処理
+  # 例外が発生した場合はerrorで指定された処理を実行する
+  split.location <- tryCatch(
+    # 文字列の分割
+    # 文字列を複数含むベクトルに対して処理できるため、結果はvectorのlistになる
+    # 今回は長さ1のものしか想定しないため、リストの1番目のvectorのみを取得
+    #strsplit(l, ", ")[[1]], # gsubを使って州名先頭の空白を処理してるためコメントアウト
+    strsplit(l, ",")[[1]], # 「,」のみでsplitしたものを使用
+    # エラー時は都市名、州名ともに「NA」を返す
+    error = function(e) return(c(NA, NA)))
+  # 正規表現で文字列を置換する
+  clean.location <- gsub("^ ", "", split.location)
+  
+  # アメリカ以外は「,」が2つ以上入っているものもあるため、
+  # フォーマットが不正なものはNAを入れる
+  if (length(clean.location) > 2) {
+    return(c(NA, NA))
+  } else {
+    return(clean.location)
+  }
+}
+
+# lapplyを使ってufo$Locationのデータすべてget.location関数を適用させる
+# 結果はlistで帰る
+city.state <- lapply(ufo$Location, get.location)
+head(city.state)
+```
+
+今回は処理してないが、listはキーを整数連番だけでなく任意の名前を付けてそれでアクセスすることも可能
+
+listをmatrixに変換
+```{r}
+# do.call
+#  第1引数の処理を第2引数のデータすべてに実行
+#  結果をmatrixで返す
+location.matrix <- do.call(rbind, city.state)
+head(location.matrix)
+
+# transformを使ってデータフレームに新しいデータを結合
+ufo <- transform(ufo, USSity = location.matrix[, 1], 
+                 USState = tolower(location.matrix[, 2]), #tolowerで小文字に統一
+                 stringsAsFactors = F)
+head(ufo)
+```
+
+### 不要なデータの削除
+アメリカ以外の州を削除する  
+カナダも同じ表記だが、州の略記がかぶってないので州名決め打ちで取得できる
+```{r}
+us.states <- c("ak", "al", "ar", "az", "ca", "co", "ct", "de", "fl", "ga", "hi", "ia", "id", "il",
+              "in", "ks", "ky", "la", "ma", "md", "me", "mi", "mn", "mo", "ms", "mt", "nc", "nd",
+              "ne", "nh", "nj", "nm", "nv", "ny", "oh", "ok", "or", "pa", "ri", "sc", "sd", "tn",
+              "tx", "ut", "va", "vt", "wa", "wv", "wy")
+
+# 必要なものだけ取り出す
+# ufo.us <- ufo[ufo$USState %in% us.states, ]) # たぶんこっちでもいける
+
+# match関数でus.statesに含まるものはその値、含まれまいものはNAを返すので、
+# その値をUSStateに入れる
+ufo$USState <- us.states[match(ufo$USState, us.states)]
+# 州名がNAの場合は都市名もNAにする
+ufo$USSity[is.na(ufo$USState)] <- NA
+# subsetを使ってNAじゃないものだけを抜き出す
+ufo.us <- subset(ufo, !is.na(USState))
+head(ufo.us)
+```
+
+### データの整理
+時間に関するサマリを見る
+```{r}
+summary(ufo.us$DateOccurred)
+```
+
+外れ値があるのでプロットして全体像を把握
+```{r}
+# plotを作成
+#  第1引数(data)で描画対象
+#  aesで軸の設定
+# ヒスとグラムのグループ分けの方法が指定されていないので警告がでる
+quick.hist <- ggplot(ufo.us, aes(x = DateOccurred)) +
+  geom_histogram() + # 描画するグラフの種類
+  scale_x_date(breaks = "50 years") # グラフのx軸の感覚
+quick.hist 
+# ファイルにグラフを保存
+ggsave(plot = quick.hist, filename = "img/quick_hist.png", height = 6, width = 8)
+```
+
+外れ値を除外して注目すべき部分だけを抜き取る
+```{r}
+# 1990年以降のデータのみ取得
+ufo.us <- subset(ufo.us, DateOccurred >= as.Date("1990-01-01"))
+nrow(ufo.us)
+ggplot(ufo.us, aes(x = DateOccurred)) +
+  geom_histogram() + # 描画するグラフの種類
+  scale_x_date(breaks = "50 years")
+```
+
+次単位で目撃情報をカウントするためにフォーマットの変換を行う
+```{r}
+# 存在しない列を指定した場合は自動で追加される
+# strftimeでフォーマットを文字列に変換
+ufo.us$YearMonth <- strftime(ufo.us$DateOccurred, format = "%Y-%m")
+```
+
+plyrに含まれるddpllyを利用して月単位で集計  
+map-reduceと似た動きをする
+```{r}
+# Map : USState, YearMonthをキーとして集約
+# Reduce : 行数をカウント
+sightings.counts <- ddply(ufo.us, .(USState, YearMonth), nrow)
+head(sightings.counts)
+```
+
+集計区間において目撃数がゼロのエントリが含まれていないのでその部分に0を補完
+```{r}
+# seq.Date
+#  from - toでbyステップ単位でvectorを作る
+#  seqのDate版
+date.range <- seq.Date(from = as.Date(min(ufo.us$DateOccurred)),
+                       to = as.Date(max(ufo.us$DateOccurred)),
+                       by = "month")
+date.strings <- strftime(date.range, "%Y-%m")
+
+# 州と月を結合してすべての組み合わせを作る
+# cbindはリサイクルを利用
+head(cbind(us.states[1], date.strings))
+head(cbind(us.states[2], date.strings))
+states.dates <- lapply(us.states, function(s) cbind(s, date.strings))
+
+# data frameにする
+states.dates <- data.frame(do.call(rbind, states.dates), stringsAsFactors = F)
+head(states.dates)
+```
+
+データの結合
+```{r}
+# SQLのJOINのようなdata frameの結合
+# 結合後のnamesは第1引数のものが利用され、第2引数のみの項目のnamesは使われない
+all.sightings <- merge(states.dates, sightings.counts, 
+                       by.x = c("s", "date.strings"), #第1引数の結合キー
+                       by.y = c("USState", "YearMonth"), #第2引数の結合キー,
+                       all = T) # どちらか片方にかけているものがあってもNAで補完
+head(all.sightings)
+```
+
+データの最終整形
+```{r}
+names(all.sightings) <- c("State", "YearMonth", "Sightings")
+all.sightings$Sightings[is.na(all.sightings$Sightings)] <- 0
+# date.range : 目撃情報の全区間
+# us.state : 州のvector
+# rep(data.range, length(states)) で州の数分目撃区間を生成
+all.sightings$YearMonth <- as.Date(rep(date.range, length(us.states)))
+all.sightings$State <- as.factor(toupper(all.sightings$State))
+head(all.sightings)
+```
+
+### 州ごとのプロット
+```{r}
+ggplot(all.sightings, aes(x = YearMonth, y = Sightings)) + # x軸に時間、y軸に目撃数を設定
+  geom_line(aes(color = "darkblue")) + # 棒グラフ。色の設定
+  facet_wrap(~State, nrow = 10, ncol = 5) + # 州でグラフを分割。横10,縦5。factor型じゃないとダメ
+  theme_bw() + # 白背景、黒格子のテーマ指定
+  # values :色の指定。colorと色と実際の色の対応関係を定義。ウェブセーフカラーが使える
+  # guide : "none" で凡例非表示
+  scale_color_manual(values = c("darkblue" = "darkblue"), guide = "none") + 
+  # x軸の設定
+  # breaksで間隔、labelsで表示文字列
+  scale_x_date(breaks = "5 years", labels = date_format("%Y")) + 
+  xlab("Time") + #x軸のラベル
+  ylab("Number of Sightings") + # y軸のラベル
+  ggtitle("Number of UFO sightings by Month-Year and U.S. State (1990-2010)") # グラフタイトル
+```
+
+州ごとに色分けですべてのデータを一つのグラフにプロットしてみた
+```{r}
+ggplot(all.sightings, aes(x = YearMonth, y = Sightings, color = State)) +
+  geom_line() +
+  theme_bw() +
+  scale_x_date(breaks = "5 years", labels = date_format("%Y")) + 
+  xlab("Time") +
+  ylab("Number of Sightings") +
+  ggtitle("Number of UFO sightings by Month-Year and U.S. State (1990-2010)")
+```

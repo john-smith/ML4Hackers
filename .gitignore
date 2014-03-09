@@ -8,7 +8,7 @@
 *.pdf
 *.png
 
-old/*
-figure/*p
+figure/*
+data/*
 
 !README.md
