@@ -1,0 +1,641 @@
+# chapter2
+```{r echo=FALSE}
+library(ggplot2)
+```
+## データについて
+SQLやExcelの表のような形式のものに限定  
+分割されたものはSQLのJOINによく似たmerge関数などを使って結合すればよい  
+
+矩形モデルを使っている限り、数学的手法のみでなくデータベース的手法も使える
+
+行列は2次元配列以上の扱いはしない  
+想定するデータ
+
+名前             | 年齢
+-----------------|-----
+Drew Conway      | 28
+John Myles White | 29
+
+### データの要約
+列ごとにデータの振る舞いを見る
+* M x N を 1 x Nに集約(列ごとの要約)
+```{r}
+(x <- matrix(c(1, 3, 5, 2, 6, 91, 1, 76, 1, 0, 0, 0), nrow = 4))
+colMeans(x)
+```
+* 列を画像に要約
+```{r}
+(x <- c(1, 0, 0, 0))
+x <- as.data.frame(x)
+ggplot(x, aes(x = x)) + geom_density() + theme_bw() # 本のグラフとちがう。。。
+```
+* 複数の行・列を合わせて一つに集約
+```{r}
+(x <- matrix(c(1, 3, 5, 2, 1, 0, 0, 0), nrow = 4))
+cor(x[, 1], x[, 2])
+```
+
+### 次元削減  
+列の数を減らして個々の列の振る舞いが異なるものにする  
+列数が多すぎるので要約する場合等に使う
+* M x N を M x 1に集約(行ごとの要約)
+```{r}
+(x <- matrix(c(1, 3, 5, 2, 6, 91, 1, 76, 1, 0, 0, 0), nrow = 4))
+y <- princomp(x)
+predict(y, x)[, 1]
+```
+
+## 型の推論
+最初にデータセットに各列が何を表しているのか調べる
+
+何もラベル付けされていないデータの例
+
+... | ...     | ...
+----|---------|----------
+"1" | 73.8470 | 214.8935
+"0" | 58.9107 | 102.0883
+
+最初の列は0と1だけで構成されているなどよくわからない場合でもおおよそのあたりを付ける  
+ラベルが付いていない場合は付けよう
+
+### Rの型識別関数
+* is.numeric
+ * ベクトルの要素が数値のときにtrueを返す
+ * 数値には整数と実数が含まれる
+* is.character
+ * ベクトルのエントリが文字列のときにtrueを返す
+ * 単独の文字も文字列として扱う(文字型はない)
+* is.factor
+ * 因子型のときにtrueを返す
+ * 見た目は文字列、中身は数値な型
+
+Rの関数は入力データの型によって処理の内容を変えることがある  
+文字列の"0"や"1"は数値に変換しないと扱えない場合があるなど注意が必要
+
+ダミーコーディング：  
+ メールにおいてスパムが0、非スパムが1のように符号化するなど  
+ Rではfactorとして扱う
+
+factorはラベル文字列に依存した結果になってしまわないように  
+ラベルを数値に変換してるのでは無く符号化された数値をりようしている
+
+ダミーコーディングの例
+
+* 因子コーディング
+
+ MessageID | IsSpam
+ ----------|-------
+  1        | "Yes"
+  2        | "No"
+ 
+* ダミーコーディング
+
+ MessageID | IsSpam
+ ----------|-------
+  1        | 1
+  2        | 0
+ 
+* 物理学スタイル
+
+ MessageID | IsSpam
+----------|-------
+ 1        | 1
+ 2        | -1
+
+Rではデータ読み込み時のstringsAsFactorsで因子か文字列かを指定できる  
+判断が付かない場合はとりあえず文字列にしておくとよい
+
+## 意味の推論
+各列の意味を予測する
+
+ラベル付けされてないデータ
+
+... | ...     | ...
+----|---------|----------
+"1" | 73.8470 | 214.8935
+"0" | 58.9107 | 102.0883
+
+1. 1行1人のデータ
+2. 最初の列は性別(男1、女0)
+3. 2番目の列は慎重(インチ)
+4. 3番目は体重(ポンド)
+
+意味を与えればデータが明確になる  
+全く意味のわからないデータでも検索や直感、数値要約、可視化によって判断できるようになることもある
+
+## 数値要約
+summary関数で要約を見れる
+
+summaryにベクトルを渡した場合
+* 最小値
+* 第1四分位数
+* 中央値(median)
+* 平均値(mean)
+* 第3四分位数
+* 最大値
+
+が得られる
+
+```{r}
+# ディレクトリ、ファイルでファイルを指定
+data.file = file.path("data", "heights_weights_genders.csv")
+heights.weights <- read.csv(data.file, header = T, sep = ",")
+# withで第一引数に指定した変数を省略して値にアクセスできる
+heights <- with(heights.weights, Height)
+# 要約
+summary(heights)
+```
+
+他のデータ型にたいしても要約が見れる
+
+### 平均値
+合計を要素数で割ったもの  
+平均値の計算にはmean関数を使う
+
+meanと同等の処理の実装
+```{r}
+# my.mean関数の定義
+my.mean <- function(x) {
+  # ベクトルの合計を要素数で割る
+  return(sum(x) / length(x))
+}
+```
+
+平均値の計算には各要素がベクトル内でのソートした順番などが必要ない
+
+### 中央値
+ソートした結果の中央の要素  
+中央値の計算にはmedian関数を使う  
+
+n%点：データ昇順で1/nの位置の値  
+25%点：第1四分位数  
+50%点：中央値、第2四分位数  
+75%点：第3四分位数  
+
+リストが偶数だった場合は中央2つの値の平均を取る
+
+medianと同等の処理
+```{r}
+my.median <- function(x) {
+  # ソートする
+  # decreasing = TRUEで降順
+  sorted.x <- sort(x)
+  
+  # 要素数が偶数の場合は中央2つの値の平均
+  if (length(x) %% 2 == 0) {
+    indices <- c(length(x) / 2, length(x) / 2 + 1)
+    return(mean(sorted.x[indices]))
+  # 奇数の場合は中央の値
+  } else {
+    # ceiling: 切り上げ
+    index <- ceiling(length(x) / 2)
+    return(sorted.x[index])
+  }
+}
+```
+
+### 平均値、中央値を求める
+実際に処理を実行
+```{r}
+(my.vector <- c(0, 10, 20, 30))
+# 偶数個の要素の場合
+mean(my.vector)
+median(my.vector) # 偶数の場合は中央2つの平均になっている
+
+# 奇数個の場合
+(my.vector <- c(0, 0, 20, 30, 40))
+mean(my.vector)
+median(my.vector) # 中央の要素をそのまま取り出してみる
+```
+
+実装した関数の確認
+```{r}
+my.mean(heights)
+my.median(heights)
+
+# 標準関数との差が0になるかで動作があっているかを確かめる
+mean(heights) - my.mean(heights)
+median(heights) - my.median(heights)
+```
+
+### 最頻値
+Rには最頻値を計算する関数はない  
+データセット中に最も現れる値
+
+連続値の場合は同じ値が複数出ることが無いので、区間を設定する必要がある
+
+### 分位数
+最小値
+```{r}
+min(heights)
+```
+
+最大値
+```{r}
+max(heights)
+```
+
+データの範囲
+```{r}
+# 最小値と最大値の間にすべてのデータがある
+c(min(heights), max(heights))
+#range関数で求められる
+range(heights)
+```
+
+minより下にはデータの0%、maxより下にはデータの100%が含まれるととらえることができる  
+quantilie関数で0%, 25%, 50%, 75%, 100%を求められる
+```{r}
+quantile(heights)
+#probsで求める位置を指定できる
+quantile(heights, probs = 0.3)
+#seqでvectorを作って複数指定
+quantile(heights, seq(0, 1, by = 0.2))
+
+# seq関数でfromからtoまでの範囲のby刻みのvectorを作成できる
+seq(from = 0, to = 1, by = 0.1)
+```
+
+分位数を使えば中央値に注目することで99%に注意を払うことができたり、  
+データの形状が特殊であれば特別な扱いをする必要があるなどがわかる
+
+### 分散、標準偏差
+データの広がりを見る  
+典型的な値の範囲を知るなど
+
+rangeだとminとmaxで判断するが、外れ値の影響を受けないために、  
+全体ではなく、ほぼすべてのデータの範囲を含むものが必要
+
+min, max, meanが同じデータセットが複数あるとrangeは使えない  
+rangeは2つのデータでしか見ていないため
+
+データの中央n%の範囲
+```{r}
+# 50%
+c(quantile(heights, probs = 0.25), quantile(heights, probs = 0.75))
+# 95%
+c(quantile(heights, probs = 0.025), quantile(heights, probs = 0.975))
+```
+
+分散(variance)：得られた各値が平均からどれだけ離れているかで広がりを測定  
+平均からの差の自乗の和をとり、データ数で割る  
+自乗をとらないと常に0になるので注意
+
+実装
+```{r}
+my.var <- function(x) {
+  m <- mean(x)
+  # 平均との差の自乗和をデータ数で割る
+  return(sum((x -m) ^ 2) / length(x))
+}
+
+# 標準関数との差で動作確認
+# この値は0にならない
+# 浮動小数点の計算による誤差では無いので注意
+my.var(heights) - var(heights)
+```
+
+標準分散(データ数で割る)で計算すると、真の分散よりも小さくなるので、  
+var関数では不偏分散(データ数-1で割る)を行っている  
+
+不偏分散から標準分散を求めるには$n / (n -1)$をかける
+
+my.varを不偏分散を求めるように変更
+```{r}
+my.var <- function(x) {
+  m <- mean(x)
+  return(sum((x -m) ^ 2) / (length(x) - 1))
+}
+
+# 今度は0になる
+my.var(heights) - var(heights)
+```
+
+浮動小数点による誤差はベクトルサイズが大きいときに注意
+
+分散は自乗をとっているため、データセットの値より大きくなる
+```{r}
+c(mean(heights) - var(heights), mean(heights) + var(heights))
+range(heights)
+```
+
+標準偏差：分散のrootで自乗を打ち消したもの
+
+実装
+```{r}
+my.sd <- function(x) {
+  return(sqrt(my.var(x)))
+}
+
+# 動作確認
+my.sd(heights) - sd(heights)
+```
+
+平均値と標準偏差の差をデータの範囲として計算
+```{r}
+c(mean(heights) - sd(heights), mean(heights) + sd(heights))
+range(heights)
+```
+
+分位数との比較
+```{r}
+c(mean(heights) - sd(heights), mean(heights) + sd(heights))
+c(quantile(heights, probs = 0.25), quantile(heights, probs = 0.75))
+```
+
+50%範囲よりもやや大きいのが平均±標準偏差の範囲となる  
+データの範囲についてはちゃんと可視化すること
+
+## データの可視化
+数値的要約だけではわかりづらいこともあるので可視化してパターンを見るように
+
+データの分布が既知のものである場合、  
+データの由来や特性などが推論しやすい
+
+データの形状に近い複雑な形状の構成要因として標準的な分布を使うこともできる
+
+### ヒストグラム
+データをビンに分割してビンごとの度数を表示
+```{r}
+ggplot(heights.weights, aes(x = Height)) +
+  geom_histogram(binwidth = 1) +
+  theme_bw()
+```
+
+ベル型曲線:平均値のある中央付近にデータが集中している
+
+ビン幅の影響でご認識が生まれてるかもしれないので  
+他の幅でも試してみる
+```{r warning=FALSE}
+# 5インチ幅
+# 幅が広すぎるとデータの多くが失われてしまっている
+ggplot(heights.weights, aes(x = Height)) +
+  geom_histogram(binwidth = 5) +
+  theme_bw()
+
+# 0.01インチ幅
+# 0.001だと描画に時間がかかるため、00.1にした
+# 幅が狭すぎると平滑化しすぎてよくわからなくなっている
+ggplot(heights.weights, aes(x = Height)) +
+  geom_histogram(binwidth = 0.01) +
+  theme_bw()
+```
+
+### カーネル密度推定
+密度プロット
+
+ビン幅の設定が面倒なのでこちらが便利  
+平滑化の問題はこちらにもあるが、ヒストグラムより見やすい  
+特にデータ多い場合は期待した形状に近いことが多い
+
+ヒストグラムに比べて少ないデータ量でも形状を明らかにできる
+```{r}
+ggplot(heights.weights, aes(x = Height)) +
+  geom_density() +
+  theme_bw()
+```
+
+カーネル密度推定は滑らかな曲線なので、ヒストグラムでは見つけるのが難しいパターンも発見できる  
+今回の場合、頂点部分が平らではないため、そこに何かあるのではないかと推測できる
+
+### 質的変数で分割
+まだ、見つけていない要素がありそうなときは使っていない質的変数で分割してみる
+```{r}
+# 利用していない質的変数の性別で色分け
+ggplot(heights.weights, aes(x = Height, fill = Gender)) +
+  geom_density() +
+  theme_bw()
+```
+
+性別ごとに異なる正規分布が重なっていたことがわかる  
+男女で平均身長が異なるのは当たり前なので、体重も異なるはず
+```{r}
+ggplot(heights.weights, aes(x = Weight, fill = Gender)) +
+  geom_density() +
+  theme_bw()
+```
+
+**混合モデル**：二つの異なる分布が混ざっているモデル
+
+### プロットの分割
+属性ごとの平均値などの見通しがよくなる
+```{r}
+# 二つの正規分布に分かれてることを確認するため、分割してプロットする
+ggplot(heights.weights, aes(x = Weight, fill = Gender)) + 
+  geom_density() +
+  facet_grid(Gender ~ .) +
+  theme_bw()
+```
+
+### 正規分布に関する注意点
+非常に多くのデータに共通するから「正規」分布？  
+年収や株価野変動など正規分布では表せないものも多い
+
+数学理論の中では特に重要なもの  
+
+形が似ていても正規分に従っているとは限らないこともある
+
+### 正規分布の例
+正規分布は平均と標準偏差2パラメータで形が決まる  
+平均がピーク部分の値、標準偏差が広がり
+
+平均1, 標準偏差0
+```{r}
+# 乱数のシードを指定
+# 毎回同じ形になるようにしておく
+set.seed(1)
+m <- 0
+s <- 1
+# rnorm
+#  平均が第1引数、標準偏差が第2引数の正規分布に従う乱数を
+#  第1引数個生成する
+ggplot(data.frame(X = rnorm(100000, m, s)), aes(x = X)) +
+  geom_density() +
+  theme_bw()
+```
+
+平均1, 標準偏差3
+```{r}
+set.seed(1)
+m <- 1
+s <- 3
+ggplot(data.frame(X = rnorm(100000, m, s)), aes(x = X)) +
+  geom_density() +
+  theme_bw()
+```
+
+平均0, 標準偏差5
+```{r}
+set.seed(1)
+m <- 0
+s <- 5
+ggplot(data.frame(X = rnorm(100000, m, s)), aes(x = X)) +
+  geom_density() +
+  theme_bw()
+```
+
+密度プロットのピークがデータの最頻値となるのでヒストグラム見やすくて便利
+
+正規分布の特徴
+* 最頻値を1つ持つ
+* 中央値、平均値と最頻値が一致する
+* 最頻値から左右が対象
+
+正規分布であることがわかれば、平均値と中央値が交換可能であったり、  
+標準偏差の3倍以上離れたものはほぼ無いだろうなどの予測が付くようになる
+
+### 複数の最頻値を持つデータ
+* 最頻値が1つ：単峰型
+* 2つ：双峰型
+* 3対上：多峰型
+
+### コーシー分布
+裾の広い分布  
+正規分布ではデータの99%が標準偏差の3倍以内に収まるが、コーシー分布では90%程度  
+さらに6倍以上でも5%程度の値が存在している
+```{r warning=FALSE}
+set.seed(1)
+# 乱数を生成してrangeで裾の広がり方を見る
+normal.values <- rnorm(10000, 0, 1)
+cauchy.values <- rcauchy(10000, 0, 1)
+range(normal.values)
+range(cauchy.values)
+
+# プロット用のdata frameを作成
+# distributionで分布の種類を分ける
+norm.cauchy = data.frame(x = normal.values, distribution = "norm")
+# 正規分布とコーシー分布の値を結合
+norm.cauchy =rbind(norm.cauchy, data.frame(x = cauchy.values, distribution = "cauchy"))
+# グラフの表示を色で分ける
+ggplot(norm.cauchy, aes(x = x, color = distribution)) +
+  geom_density() +
+  # コーシー分布は裾が広いので表示上の範囲をしぼる
+  xlim(-4, 4) +
+  theme_bw()
+```
+
+### ガンマ分布
+左右非対称な形状  
+軽く歪んだ形状  
+極端な値は最頻値よりも右側にでやすい  
+
+ガンマ分布は正の値しかない  
+確率変数最適化などデータの性質と合っている場合は使い勝手がよい
+```{r}
+set.seed(1)
+ggplot(data.frame(X = rgamma(10000, 1, 0.001)), aes(x = X)) +
+  geom_density() +
+  theme_bw()
+```
+
+ゲームのスコアの度数がガンマ分布によく似た形をしている
+* スコアが低い所の多くの人が固まっている
+* ごく一部圧倒的に高い人がいる
+* 高くなるほど人数は減っていく
+
+### 指数分布
+左右非対称  
+強く歪んだ形状
+
+最頻値が0な指数曲線  
+正の値だけが存在する
+
+コールセンターのオペレータ対応時間等が該当する
+```{r}
+ggplot(data.frame(x = rexp(10000)), aes(x = x)) +
+  geom_density() +
+  theme_bw()
+```
+
+## 複数の列の関係
+* 身長から体重を予測
+* メールのテキストからスパム判定
+* またオススメしていない商品をユーザが購入するかの予測
+
+など複数の変数の関係を明らかにすることがよくある  
+これらは
+* 回帰
+ * 関数の形状を予測する(結果が量的データの予測)
+* 分類
+ * 属するカテゴリを予測する(結果が質的データの予測)
+ 
+に分けられる
+
+### 回帰の可視化
+散布図で2つの列の関連性を調べる
+```{r}
+ggplot(heights.weights, aes(x = Height, y = Weight)) +
+  geom_point() +
+  theme_bw()
+```
+
+身長と体重には明家に正の相関があることがわかる  
+この図はわかりやすいが、この手のパターンを発見したい
+
+平滑化した線を引く(回帰線？)
+```{r warning=FALSE}
+ggplot(heights.weights, aes(x = Height, y = Weight)) +
+  geom_point() +
+  geom_smooth() +
+  theme_bw()
+```
+
+青い線(点推定？) + 網掛け範囲で予測(誤差範囲？)  
+データが多いほど網掛け領域が狭くなり、予測精度があがる
+
+データサイズを減らすと予測範囲がどうなるか
+```{r}
+# データ数20
+ggplot(heights.weights[1:20, ], aes(x = Height, y = Weight)) +
+  geom_point() +
+  geom_smooth() +
+  theme_bw()
+
+# データ数200
+ggplot(heights.weights[1:200, ], aes(x = Height, y = Weight)) +
+  geom_point() +
+  geom_smooth() +
+  theme_bw()
+
+# データ数2000
+ggplot(heights.weights[1:2000, ], aes(x = Height, y = Weight)) +
+  geom_point() +
+  geom_smooth() +
+  theme_bw()
+```
+
+### 分類の可視化
+水準ごとに色分け
+
+第3列として性別情報を使って色分け
+```{r}
+ggplot(heights.weights, aes(x = Height, y = Weight, color = Gender)) +
+  geom_point() +
+  theme_bw()
+```
+
+性別の予測ができそうに見える  
+カテゴリ推定はまさに分類
+
+身長・体重から性別を予測し、分離超平面を引く  
+正解率は92%。身長と体重しか使ってない割には良い結果
+```{r}
+# 男性が1、女性が0の列を追加
+heights.weights <- transform(heights.weights, Male = ifelse(Gender == "Male", 1, 0))
+head(heights.weights)
+
+logit.model <- glm(Male ~ Height + Weight, data = heights.weights, family = binomial(link = "logit"))
+summary(logit.model)
+
+ggplot(heights.weights, aes(x = Height, y = Weight, color = Gender)) +
+  geom_point() +
+  #線を引く？
+  # 軸を転地するときはcoef(logit.model)[2]を[3]に、[3]を[2]にすること
+  stat_abline(intercept = -coef(logit.model)[1] / coef(logit.model)[3], # 切片
+              slope = -coef(logit.model)[2] / coef(logit.model)[3], # 傾き
+              geom = "abline", # 線の種類？
+              color = "black") +
+  theme_bw()
+```
+
+実際のデータでは数十、数百、数千の列から分類する場合もある

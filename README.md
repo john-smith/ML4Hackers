@@ -12,6 +12,8 @@
 本家のダウンロード先は
 * UFO
  * http://www.infochimps.com/datasets/60000-documented-ufo-sightings-with-text-descriptions-and-metada
+* Spamメール
+ * http://spamassassin.apache.org/publiccorpus/
 
 データはすべてdataディレクトリにダウンロードする前提となっている
 
