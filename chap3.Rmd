@@ -525,4 +525,6 @@ ggplot(class.df, aes(x = Pr.HAM, Pr.SPAM)) +
   theme(axis.text.x = element_blank(), axis.text.y = element_blank())
 ```
 
-精度を上げると再現率が下がっているのがわかる
+非スパムに対する分類精度はあがったが、スパムに対する分類精度は下がっている
+これは決定境界を動かしているということ  
+求める結果に応じて適切なモデルを選ぶのが大事
