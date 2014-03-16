@@ -1,9 +1,4 @@
 # chapter3
-```{r echo=FALSE}
-library('tm')
-library('ggplot2')
-```
-
 ## 分類について
 決定境界
 * 非線形なものも含む分離超平面  
@@ -44,7 +39,6 @@ tabble |  1182  |  43
 スパムである傾向が強い
 
 プロットしたときに多くの点が重なってしまう場合はランダムノイズ(ジッタ)を加える
-(後で図)
 
 実際には単語以外にも有効な素性として
 * 偽装ヘッダ
@@ -70,7 +64,7 @@ ex:あるコンピュータサイエンスの学生が女性である確率を�
 の差異を発見する
 
 あとから与えられたデータがどちらに出現しやすいかで予測が行える  
-スパムに出現しやすい単語があればそれがスパムである一つの証拠となり、
+スパムに出現しやすい単語があればそれがスパムである一つの証拠となり、  
 スパムに現れ、非スパムにあまり現れない単語の数が多くなればスパムとしての強い証拠となる
 
 判定は
@@ -95,3 +89,440 @@ ex:あるコンピュータサイエンスの学生が女性である確率を�
 それなりに精度が出る方法
 
 ## ベイズスパム分類機
+SpamAssassin
+* スパム
+* 非スパム(易)
+* 非スパム(難)
+
+の3つのカテゴリがある
+
+非スパム(難)は非スパム(易)よりも見極めが難しい  
+難を見極めるにはより多くの素性が必要になる
+
+### データの内容
+データにはヘッダとメッセージが含まれいる
+
+ヘッダにはfromやIPなどメールの有用な情報が含まれいる  
+ただし今回はメッセージ部分しか利用しない  
+
+今回はメッセージでの分類精度を見るため、メッセージのみに注目するが
+* ヘッダの偽装
+* 既知のスパム業者
+* 掛けている部分があるか
+
+など実際のスパムフィルタで使える
+
+### メッセージ部分を抽出
+ヘッダの後に空行を破産でメッセージが始まっていメールの仕様るのを利用する
+
+
+ライブラリの読み込み
+```{r}
+library('tm') #text mining
+library('ggplot2')
+```
+
+ファイルの読み込み
+```{r}
+# spamのトレーニング用データ
+spam.train.path <- "data/mail/spam_train/"
+# spamのテスト用データ
+spam.test.path <- "data/mail/spam_test/"
+
+# 非スパム(易)のトレーニング用データ
+easyham.train.path <- "data/mail/easy_ham_train/"
+# 非スパム(易)のテスト用データ
+easyham.test.path <- "data/mail/easy_ham_test/"
+
+# 非スパム(難)のトレーニング用データ
+hardham.train.path <- "data/mail/hard_ham_train/"
+# 非スパム(難)のテスト用データ
+hardham.test.path <- "data/mail/hard_ham_test/"
+```
+
+空行から先をメッセージ部分としてベクトル化
+```{r}
+get.msg <- function(path) {
+  # ファイルを読み込むためのコネクションを取得
+  # ASCII以外があるのでlatin1を指定しているが、最近はUTF-8が多い
+  # open r:読み込み, w:書き込み
+  # encoding ファイルのエンコード
+  con <- file(path, open = "rt", encoding = "latin1")
+  # ファイルを読み込むんで各行を入れたベクトルを返す
+  text <- readLines(con)
+  # seqで空行の位置からファイルサイズまでの番号の行を取得
+  # from : whichの1つ目、最初の空行
+  # to : ファイルの末尾 == 行数
+  # by : 1行ずつ
+  msg <- text[seq(which(text == "")[1] + 1, length(text), 1)]
+  # ファイルのコネクションをクローズ
+  close(con)
+  # pasteで全体を改行で結合して、1つの文字列として返す
+  return(paste(msg, collapse = "\n"))
+}
+
+# ディレクトリのパスからファイル一覧を取得
+spam.train.docs <- dir(spam.train.path)
+# いらないファイルを取り除く
+spam.train.docs <- spam.train.docs[which(spam.train.docs != "cmds")]
+# ディレクトリ内すべてのファイルに対して、get.msgを実行
+# pasteを使ってディレクトリとファイルを結合し、ファイルのパスを取得
+# sapply：第一引数のベクトルの各要素それぞれに第2引数の処理を実行
+# 第2引数の処理に引数が必要場合は第3引数以降で指定
+all.spam.train <- sapply(spam.train.docs, function(p) get.msg(paste(spam.train.path, p, sep = "")))
+head(all.spam.train, 3)
+```
+
+### メッセージのTDM(Term document matrix)化
+メッセージ部分のみを取り出し、tmパッケージを利用してTDM(単語文書行列)化し、コーパスを作る  
+この操作でメッセージ中の単語を抽出してそれに対する操作ができるようになる
+
+tmパッケージではテキストをきれいにしたり、正規化したりする操作が簡単にできる
+
+TDMは N x M の行列で [i, j] で単語iが文書jに現れる回数を取得できる
+```{r}
+get.tdm <- function(doc.vec) {
+  # Coupus : コーパスの作成
+  # VectorSource : vectorからコーパスを作成する
+  doc.corpus <- Corpus(VectorSource(doc.vec))
+  # TDM作成時の動作指定
+  #  stopwords : ストップワード除去。除去されるワードは stopword() を参照
+  #  removePunctuation : 句読点などを削除
+  #  removeNumbers : 数字を削除
+  #  minDocFreq : 出現をカウントする最低値
+  control <- list(stopwords = T, removePunctuation = T, removeNumbers = T, minDocFreq = 2)
+  doc.tdm = TermDocumentMatrix(doc.corpus, control)
+  return(doc.tdm)
+}
+
+# Coupus関数のソースとして使えるもの
+?getSources
+# stopwordsで除去されるもの
+stopwords()
+
+spam.train.tdm <- get.tdm(all.spam.train)
+```
+
+データフレームの作成
+```{r}
+# tdmを行列に変換
+spam.train.matrix <- as.matrix(spam.train.tdm)
+# term(列)ごとの合計値を取得
+spam.train.counts <- rowSums(spam.train.matrix)
+# termとfrequencyのdata frameを作成
+# frequencyは文字列としても表現できるため、
+# デフォルトの動作での型の統一によりfactorになるのをさけるため、
+# stringsAsFactorsをFALSEにする
+spam.train.df <- data.frame(cbind(names(spam.train.counts), 
+                                  as.numeric(spam.train.counts)),
+                            stringsAsFactors = F)
+# data frameに名前を付ける
+names(spam.train.df) <- c("term", "frequency")
+# frequencyを数値に変換
+spam.train.df$frequency <- as.numeric(spam.train.df$frequency)
+
+# 単語の出現文書数の割合
+# 各単語ごとにすべての単語に処理を実行するためsapplyを使う
+spam.train.occurrence <- 
+  # 1行ずつすべての行に対して処理を行う
+  sapply(1:nrow(spam.train.matrix),
+         function(i) {
+           # 全文書数 / freqがゼロでない文書数 で単語の出現文書数の割合を取得
+           # freqがゼロでない : その行のゼロではない列数
+           # 全文書 : 行列の列数
+           length(which(spam.train.matrix[i, ] > 0)) / ncol(spam.train.matrix)
+         })
+# コーパス全体での頻度を取得
+# 各単語のfreq / freqの合計
+spam.train.density <- spam.train.df$frequency / sum(spam.train.df$frequency)
+
+# 出現割合、頻度をdata frameに追加
+spam.train.df <- transform(spam.train.df, 
+                           density = spam.train.density,
+                           occurrence = spam.train.occurrence)
+
+# データのチェック
+#  スパムの兆候が強い単語を見るためoccurrenceで降順ソート
+# order : ソートした結果のインデックスのベクトルを返す
+# 参照するデータの添字に指定することでソートした結果を取得できる
+# 引数をマイナスにするかdecreasing = TRUEで降順
+# 本と同じ結果にならないので注意
+head(spam.train.df[with(spam.train.df, order(-occurrence)), ])
+#head(spam.train.df[order(spam.train.df$occurrence, decreasing = T), ])
+
+# 出現頻度で見るため、frequencyでもソートしてみる
+head(spam.train.df[with(spam.train.df, order(-frequency)), ])
+```
+
+### 非スパムにも同じ処理を行う
+スパムと数をそろえるために読み込む数を500にする  
+ついでに関数化しとく
+```{r}
+get.tdm.df <- function(path, size = 0) {
+  docs <- dir(path)
+  docs <- docs[which(docs != "cmds")]
+  if (size == 0) {
+    all <- sapply(docs, function(p) get.msg(paste(path, p, sep = "")))
+  } else {
+    all <- sapply(docs[1:size], function(p) get.msg(paste(path, p, sep = "")))
+  }
+  tdm <- get.tdm(all)  
+  matrix <- as.matrix(tdm)
+  counts <- rowSums(matrix)
+  df <- data.frame(cbind(names(counts), as.numeric(counts)), stringsAsFactors = F)
+  names(df) <- c("term", "frequency")
+  df$frequency <- as.numeric(df$frequency)
+  occurrence <- sapply(1:nrow(matrix), 
+                       function(i){
+                         length(which(matrix[i, ] > 0)) / ncol(matrix)
+                       })
+  density <- df$frequency / sum(df$frequency)
+  df <- transform(df, dencity = density, occurrence = occurrence)
+  
+  return(df)
+}
+
+# spamとサイズを合わせるためにspamメールの数分のみを利用
+easyham.train.df <- get.tdm.df(easyham.train.path, length(spam.train.docs))
+# こちらも本とは違うので注意
+head(easyham.train.df[with(easyham.train.df, order(-occurrence)), ])
+```
+
+スパムとは傾向が違うのでスパムを非スパムと分類されるには多くの非スパム語が必要となる
+
+### 非スパム(難)でテスト
+新たに受け取ったメールがスパムか非スパムかを判定する
+
+分類には既存の訓練データに含まれる単語を利用して確率を計算するため、  
+既存の単語セットには出現していないものが新しいメッセージに含まれていた場合はどうするか
+
+分類を行うにはメッセージの条件付き確率を計算するため、各単語の出現確率の積を取る  
+出現しなかったものを確率0とすると
+* モデルに無いものが、未来永劫出てこないと仮定するのはおかしい
+* 積を取ったときに全体の確率が0になってしまうことがある
+ * これはヤバい
+
+回避策として
+* 特定の分布からランダムに確率を決める
+* 自然言語処理(natural language processing:NLP)の技術でスパムらしさ推定
+
+などが、上げられる  
+今回は0.00001%と非常に小さい確率を与えることで対処(単純なテキストを扱ううえでは一般的な方法のひとつ)
+
+ただし、この手法や0.00001%という値が常に正しい訳では無いので注意  
+別なデータだと0.00001%は大きすぎたり、小さすぎたりする
+
+スパム、非スパムの出現確率が同等であると仮定しているため、それぞれの確率は50%としておく  
+事前確率は後から変更できるようにしておく
+
+### 分類処理の実装
+```{r}
+# prior : 事前確率
+# c : 出現しない単語に割り当てる確率
+# 少数のかけ算のため、ほとんどの値が0になってしまうのでオリジナルではなくlogの足し算を使う
+classify.email <- function(path, train.df, prior = 0.5, c = 1e-6) {
+  msg <- get.msg(path)
+  msg.tdm <- get.tdm(msg)
+  msg.frequency = rowSums(as.matrix(msg.tdm))  
+  # intersect : 第1引数で指定したものを第2引数から検索。andの結果を返す
+  msg.match <- intersect(names(msg.frequency), train.df$term)
+  # マッチしたものが無ければすべての要素分cを掛け合わせて返す
+  if (length(msg.match) < 1) {
+    #return(prior * c ^ (length(msg.frequency)))
+    # logの足し算で計算
+    return((log2(prior) + log2(c)) * length(msg.frequency))
+  } else {
+    # マッチしたもののoccurrenceを取得
+    # match : 第1引数と第2引数のandの結果の位置を返す
+    match.probs <- train.df$occurrence[match(msg.match, train.df$term)]
+    # マッチしたものは確率を掛け合わせる
+    # 分類対象の単語全体数からマッチしたものの数を引いて、
+    # その数分cを掛け他ものをマッチしなかったものとして利用
+    #return(prior * prod(match.probs) * c ^ (length(msg.frequency) - length(msg.match)))
+    return(sum(log2(prior) + log2(match.probs)) + 
+      (log2(prior) + log2(c)) * (length(msg.frequency) - length(msg.match)))
+  }
+}
+```
+
+### 分類
+すべて非スパムであることがわかっているため、非スパムになるのが理想的  
+ただし、難にはスパムっぽい単語も多く含まれている
+```{r}
+hardham.train.docs <- dir(hardham.train.path)
+hardham.train.docs <- hardham.train.docs[which(hardham.train.docs != "cmds")]
+hardham.spamtest <- sapply(hardham.train.docs,
+                           function(p) classify.email(paste(hardham.train.path, p, sep = ""),
+                           train.df = spam.train.df))
+hardham.hamtest <- sapply(hardham.train.docs,
+                          function(p) classify.email(paste(hardham.train.path, p, sep = ""),
+                          train.df = easyham.train.df))
+hardham.res <- ifelse(hardham.spamtest > hardham.hamtest, TRUE, FALSE)
+# FALSE : 非スパム
+# TRUE : スパム
+summary(hardham.res)
+```
+
+### すべてのデータに対してテストを行う
+すべてのデータで分類処理を実行する
+```{r}
+# スパムの確率、非スパムの確率、スパムであれば1のvectorを返す
+spam.classifier <- function(path) {
+  pr.spam <- classify.email(path, spam.train.df)
+  pr.ham <- classify.email(path, easyham.train.df)
+  return (c(pr.spam, pr.ham, ifelse(pr.spam > pr.ham, 1, 0)))
+}
+
+spam.test.docs <- dir(spam.test.path)
+spam.test.docs <- spam.test.docs[which(spam.test.docs != "cmds")]
+easyham.test.docs <- dir(easyham.test.path)
+easyham.test.docs <- easyham.test.docs[which(easyham.test.docs != "cmds")]
+hardham.test.docs <- dir(hardham.test.path)
+hardham.test.docs <- hardham.test.docs[which(hardham.test.docs != "cmds")]
+
+# lapply : 全てのデータに対して処理した結果をリストで返す
+spam.test.class <- lapply(spam.test.docs,
+                          function(p) spam.classifier(paste(spam.test.path, p , sep = "")))
+easyham.test.class <- lapply(easyham.test.docs,
+                          function(p) spam.classifier(paste(easyham.test.path, p , sep = "")))
+hardham.test.class <- lapply(hardham.test.docs,
+                          function(p) spam.classifier(paste(hardham.test.path, p , sep = "")))
+
+# spam.test.classをmatrixに変換する
+# do.callでrbindを呼び出して、listの各値をmatrixに結合していく
+spam.test.matrix <- do.call(rbind, spam.test.class)
+spam.test.final <- cbind(spam.test.matrix, "SPAM")
+easyham.test.matrix <- do.call(rbind, easyham.test.class)
+easyham.test.final <- cbind(easyham.test.matrix, "EASYHAM")
+hardham.test.matrix <- do.call(rbind, hardham.test.class)
+hardham.test.final <- cbind(hardham.test.matrix, "HARDHAM")
+
+# 全てのデータを結合
+class.matrix <- rbind(spam.test.final, easyham.test.final, hardham.test.final)
+
+# data frame化
+class.df <- data.frame(class.matrix, stringsAsFactors = F)
+names(class.df) <- c("Pr.SPAM" ,"Pr.HAM", "Class", "Type")
+class.df$Pr.SPAM <- as.numeric(class.df$Pr.SPAM)
+class.df$Pr.HAM <- as.numeric(class.df$Pr.HAM)
+class.df$Class <- as.logical(as.numeric(class.df$Class))
+class.df$Type <- as.factor(class.df$Type)
+head(class.df)
+
+spam.par <- matrix(c(
+  sum(!class.df$Class & class.df$Type == "SPAM") / sum(class.df$Type == "SPAM"),
+  sum(!class.df$Class & class.df$Type == "EASYHAM") / sum(class.df$Type == "EASYHAM"),
+  sum(!class.df$Class & class.df$Type == "HARDHAM") / sum(class.df$Type == "HARDHAM"),
+  
+  sum(class.df$Class & class.df$Type == "SPAM") / sum(class.df$Type == "SPAM"),
+  sum(class.df$Class & class.df$Type == "EASYHAM") / sum(class.df$Type == "EASYHAM"),
+  sum(class.df$Class & class.df$Type == "HARDHAM") / sum(class.df$Type == "HARDHAM")),
+  ncol = 2)
+
+rownames(spam.par) <- c("スパム", "非スパム(易)", "非スパム(難)")
+colnames(spam.par) <- c("非スパムと分類", "スパムと分類")
+spam.par
+
+ggplot(class.df, aes(x = Pr.HAM, Pr.SPAM)) +
+  geom_point(aes(color = Type)) +
+  stat_abline(yintercept = 0, slope = 1) +
+  scale_shape_manual(values = c("EASYHAM" = 1,
+                                "HARDHAM" = 2,
+                                "SPAM" = 3),
+                     name = "Email Type") +
+  scale_alpha(guide = "none") +
+  xlab("log[Pr(HAM)]") +
+  ylab("log[Pr(SPAM)]") +
+  xlim(-2000, 0) +
+  ylim(-2000, 0) +
+  theme_bw() +
+  theme(axis.text.x = element_blank(), axis.text.y = element_blank())
+```
+決定境界は単純にどっちが大きいかなのでy = xを利用している
+
+グラフでは上側が非スパム、下側スパムと分類される  
+実際にはそうなっていないが、メッセージの種類によってはいい感じになっている
+
+### 結果の改善
+非スパムは全体のうち500件しか使っていない  
+実際にはスパム:非スパムは20:80位なのでそれを利用する
+
+classify.emailのpriorを変更することでこの条件を事前確率に組み込む
+```{r}
+# easyhamのデータを全件つかって学習
+easyham.train.df <- get.tdm.df(easyham.train.path, 0)
+
+# 事前分布を変更                               
+spam.classifier <- function(path) {
+  pr.spam <- classify.email(path, spam.train.df, prior = 0.2)
+  pr.ham <- classify.email(path, easyham.train.df, prior = 0.8)
+  return (c(pr.spam, pr.ham, ifelse(pr.spam > pr.ham, 1, 0)))
+}
+
+spam.test.docs <- dir(spam.test.path)
+spam.test.docs <- spam.test.docs[which(spam.test.docs != "cmds")]
+easyham.test.docs <- dir(easyham.test.path)
+easyham.test.docs <- easyham.test.docs[which(easyham.test.docs != "cmds")]
+hardham.test.docs <- dir(hardham.test.path)
+hardham.test.docs <- hardham.test.docs[which(hardham.test.docs != "cmds")]
+
+# lapply : 全てのデータに対して処理した結果をリストで返す
+spam.test.class <- lapply(spam.test.docs,
+                          function(p) spam.classifier(paste(spam.test.path, p , sep = "")))
+easyham.test.class <- lapply(easyham.test.docs,
+                          function(p) spam.classifier(paste(easyham.test.path, p , sep = "")))
+hardham.test.class <- lapply(hardham.test.docs,
+                          function(p) spam.classifier(paste(hardham.test.path, p , sep = "")))
+
+# spam.test.classをmatrixに変換する
+# do.callでrbindを呼び出して、listの各値をmatrixに結合していく
+spam.test.matrix <- do.call(rbind, spam.test.class)
+spam.test.final <- cbind(spam.test.matrix, "SPAM")
+easyham.test.matrix <- do.call(rbind, easyham.test.class)
+easyham.test.final <- cbind(easyham.test.matrix, "EASYHAM")
+hardham.test.matrix <- do.call(rbind, hardham.test.class)
+hardham.test.final <- cbind(hardham.test.matrix, "HARDHAM")
+
+# 全てのデータを結合
+class.matrix <- rbind(spam.test.final, easyham.test.final, hardham.test.final)
+
+# data frame化
+class.df <- data.frame(class.matrix, stringsAsFactors = F)
+names(class.df) <- c("Pr.SPAM" ,"Pr.HAM", "Class", "Type")
+class.df$Pr.SPAM <- as.numeric(class.df$Pr.SPAM)
+class.df$Pr.HAM <- as.numeric(class.df$Pr.HAM)
+class.df$Class <- as.logical(as.numeric(class.df$Class))
+class.df$Type <- as.factor(class.df$Type)
+head(class.df)
+
+spam.par <- matrix(c(
+  sum(!class.df$Class & class.df$Type == "SPAM") / sum(class.df$Type == "SPAM"),
+  sum(!class.df$Class & class.df$Type == "EASYHAM") / sum(class.df$Type == "EASYHAM"),
+  sum(!class.df$Class & class.df$Type == "HARDHAM") / sum(class.df$Type == "HARDHAM"),
+  
+  sum(class.df$Class & class.df$Type == "SPAM") / sum(class.df$Type == "SPAM"),
+  sum(class.df$Class & class.df$Type == "EASYHAM") / sum(class.df$Type == "EASYHAM"),
+  sum(class.df$Class & class.df$Type == "HARDHAM") / sum(class.df$Type == "HARDHAM")),
+  ncol = 2)
+
+rownames(spam.par) <- c("スパム", "非スパム(易)", "非スパム(難)")
+colnames(spam.par) <- c("非スパムと分類", "スパムと分類")
+spam.par
+
+ggplot(class.df, aes(x = Pr.HAM, Pr.SPAM)) +
+  geom_point(aes(color = Type)) +
+  stat_abline(yintercept = 0, slope = 1) +
+  scale_shape_manual(values = c("EASYHAM" = 1,
+                                "HARDHAM" = 2,
+                                "SPAM" = 3),
+                     name = "Email Type") +
+  scale_alpha(guide = "none") +
+  xlab("log[Pr(HAM)]") +
+  ylab("log[Pr(SPAM)]") +
+  xlim(-2000, 0) +
+  ylim(-2000, 0) +
+  theme_bw() +
+  theme(axis.text.x = element_blank(), axis.text.y = element_blank())
+```
+
+精度を上げると再現率が下がっているのがわかる
