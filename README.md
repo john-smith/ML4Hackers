@@ -14,6 +14,13 @@
  * http://www.infochimps.com/datasets/60000-documented-ufo-sightings-with-text-descriptions-and-metada
 * Spamメール
  * http://spamassassin.apache.org/publiccorpus/
+ * ディレクトリ名を変更している
+  * spam -> mail/spam_train
+  * spam2 -> mail/spam_test
+  * easyham -> mail/easyham_train
+  * easyham2 -> mail/easyham_test
+  * hardham -> mail/hardham_train
+  * hardham -> mail/hardham_test
 
 データはすべてdataディレクトリにダウンロードする前提となっている
 
