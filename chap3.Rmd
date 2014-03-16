@@ -365,7 +365,7 @@ summary(hardham.res)
 
 ### すべてのデータに対してテストを行う
 すべてのデータで分類処理を実行する
-```{r}
+```{r warning=FALSE}
 # スパムの確率、非スパムの確率、スパムであれば1のvectorを返す
 spam.classifier <- function(path) {
   pr.spam <- classify.email(path, spam.train.df)
@@ -448,7 +448,7 @@ ggplot(class.df, aes(x = Pr.HAM, Pr.SPAM)) +
 実際にはスパム:非スパムは20:80位なのでそれを利用する
 
 classify.emailのpriorを変更することでこの条件を事前確率に組み込む
-```{r}
+```{r warning=FALSE}
 # easyhamのデータを全件つかって学習
 easyham.train.df <- get.tdm.df(easyham.train.path, 0)
 
@@ -466,7 +466,6 @@ easyham.test.docs <- easyham.test.docs[which(easyham.test.docs != "cmds")]
 hardham.test.docs <- dir(hardham.test.path)
 hardham.test.docs <- hardham.test.docs[which(hardham.test.docs != "cmds")]
 
-# lapply : 全てのデータに対して処理した結果をリストで返す
 spam.test.class <- lapply(spam.test.docs,
                           function(p) spam.classifier(paste(spam.test.path, p , sep = "")))
 easyham.test.class <- lapply(easyham.test.docs,
@@ -474,8 +473,6 @@ easyham.test.class <- lapply(easyham.test.docs,
 hardham.test.class <- lapply(hardham.test.docs,
                           function(p) spam.classifier(paste(hardham.test.path, p , sep = "")))
 
-# spam.test.classをmatrixに変換する
-# do.callでrbindを呼び出して、listの各値をmatrixに結合していく
 spam.test.matrix <- do.call(rbind, spam.test.class)
 spam.test.final <- cbind(spam.test.matrix, "SPAM")
 easyham.test.matrix <- do.call(rbind, easyham.test.class)
@@ -483,10 +480,7 @@ easyham.test.final <- cbind(easyham.test.matrix, "EASYHAM")
 hardham.test.matrix <- do.call(rbind, hardham.test.class)
 hardham.test.final <- cbind(hardham.test.matrix, "HARDHAM")
 
-# 全てのデータを結合
 class.matrix <- rbind(spam.test.final, easyham.test.final, hardham.test.final)
-
-# data frame化
 class.df <- data.frame(class.matrix, stringsAsFactors = F)
 names(class.df) <- c("Pr.SPAM" ,"Pr.HAM", "Class", "Type")
 class.df$Pr.SPAM <- as.numeric(class.df$Pr.SPAM)
