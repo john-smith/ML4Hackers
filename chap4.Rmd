@@ -634,13 +634,6 @@ head(train.ranks.df)
 ```{r warning=FALSE}
 # データの結合
 final.df <- rbind(train.ranks.df, test.ranks.df)
-# Dateを日付型にする
-final.df$Date <- date.converter(final.df, pattern1, pattern2)
-# 日付降順でソート
-#final.df <- final.df[rev(with(final.df, order(Date))), ]
-final.df <- final.df[order(final.df$Date, decreasing = T), ]
-head(final.df)
-
 ggplot(subset(final.df, Type == "TRAINING"), aes(x = Rank)) +
   stat_density(aes(fill = Type, alpha = 0.65)) +
   # データの追加
