@@ -559,7 +559,7 @@ rank.message <- function(path) {
   
   # 件名のweight取得
   thread.terms <- term.counts(msg[3], control = list(stopwords = stopwords()))
-  thread.terms.weights <- get.weight(thread.terms, term.weights)
+  thread.terms.weights <- get.weights(thread.terms, term.weights)
   
   # 本文のweight取得
   msg.terms <- term.counts(msg[4], control = list(stopwords = stopwords(), 
