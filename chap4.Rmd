@@ -1,0 +1,682 @@
+# chapter4
+## ランキング
+二値分類ではなく、ランキング付けしてソートする
+
+推薦システム：順位付けした結果でオススメを提示してる
+* Amazon
+ * スペック、メーカー、価格などを利用
+ * プラズマテレビを買った人が次に買いそうなアクセサリ
+* Netflix
+ * ジャンル、出演者、監督、上映時間などを利用
+ * 監督のファンであるなどから次にレンタルしそうなものを予測
+
+など、在庫があるものの中で順位付けを行い、  
+買ってもらえそうな順でオススメするものを決める
+
+素性はきちんと定義されており、それに基づいて構造化したデータを利用  
+明示的な出力例(教師データ)を与えて学習を行う
+
+正解データに近い結果になるように素性などの工夫により調整を行う
+
+データに対して明示的に答えが与えられていない場合は教師なし  
+データの傾向から似た者同士をまとめあげるクラスタリングなど  
+
+ランキングでうまく項目を並べるには重み付けが必要となる
+
+## メールの優先度並び替え
+* 抽出可能な素性の抽出
+* 素性が優先度にどのように関連するか
+
+を調べる
+
+### メールの性質
+時間軸にそってやり取りをしている
+* 優先度を決めるのにやり取りそのものに焦点を当てる
+* メッセージそのものではなく、送受信の動きに注目
+* 返信の有無
+ * どの程度注目して行動するかという未来の行動に対する予測
+* 時間軸が鍵となる
+ * 受信してから行動を起こすまでの時間
+ * 平均時間が短ければそれほど重要である可能性が高い
+
+### Gmailの素性
+[Gmailの優先トレイ](http://static.googleusercontent.com/media/research.google.com/ja//pubs/archive/36955.pdf)が大規模にスケールする実装方法  
+Googleの場合はメールに関する膨大なデータがあり  
+開く、ラベル付け、返信などの行動についてついや、  返信に関しても受信時刻ではなく最終的にユーザがチェックした時間など  
+
+時間軸での一連の行動、最小と最大の時間、メールに関する素性、メールチェックに関する動作など、  
+様々な情報が得られる
+
+Googleでは数多くの素性を使っており、ユーザが素性を評価する方法が多様であるようので、  
+スパムフィルタのように誰が作っても同じになるとはいかない
+
+数百の素性のカテゴリについて(たぶんこれ以外にもいろいろある)
+* ソーシャル素性
+ * 送信者と受信者の関係の強さに基づく
+ * 受信メールの中での送信者の割合など
+* コンテンツ素性
+ * ヘッダ情報
+ * 受信者がメール上で行う(行わない)ことと相関を持つ単語(件名に含まれる単語など)
+ * ユーザに固有のものとして学習の前段階の処理で発見する
+* スレッド素性
+ * スレッドとユーザの関係
+ * ユーザがスレッドを始めたかなど
+* ラベル素性
+ * フィルタを用いてメールに適用したラベルを調べる
+
+素性の値は順位付けする際に計算され、学習のために一時的に保存される  
+連続値は素性値ヒストグラムに対する[ID3](http://ja.wikipedia.org/wiki/ID3)のようなアルゴリズムで二値化
+
+だたし、今回はそれらを取得できない
+
+SpamAssassinの公開コーパスを利用  
+単一ユーザの時系列メールも含まれているため、スレッドを利用して順位付けとテストを行うことができる  
+非スパムで受信箱に入れてよいデータのみを扱う
+
+完全なデータとの違いは、受信メールしか見ることができない点  
+いつ鈍なメールに返信したか、自らスレッドを開始したかなどはデータとして手に入らない  
+今回のは演習であり、実際に使うにはもっと様々なデータが必要  
+制約があってもある程度は作れる例
+
+#### ソーシャル素性
+重要性を最高位  
+ただし、今回は受信データしか扱うことができない
+* 多くのメールを受け取っている人とは強い関係ある可能性が高い
+* 流量の多いMLに登録しているだけで優先度は高くない
+
+受信情報だけではどちらか判断がつかないので他の素性も必要  
+また、一時的なやり取りが影響を及ぼすことがあるので時間的なセグメントに分割する必要がある
+
+データを時系列で2分割して、訓練データをテストデータとする
+
+スレッドを認識させ、その中での活動に注目  
+活発なスレッドほど重要
+
+#### コンテンツ素性
+それまで受信したメールの本文や件名に共通で含まれている用語が多く含まれたメールほど重要  
+Gmailの論文でも言及されているもの
+
+件名は本文より短いため、重み付けが必要となる
+
+#### その他手に入らないもの
+* ソーシャル素性の送信側
+ * 近似的な手法を使うしか無い
+* ラベル付け
+* メッセージんの移動
+
+### 利用する素性
+メールの時系列でソートし、以下の素性をちゅう出する
+* 送信者ごとのメッセージ量
+ * ソーシャル素性として利用
+* 送信日時
+ * 開封日時は特定できない
+* 活発なスレッドの特定
+ * スレッドを探してやり取りの範囲をまとめる
+* メッセージ中の頻出単語
+ * 件名と本文
+ * コンテンツ素性として利用
+
+### 素性の抽出
+データセットから素性抽出や追加、一時的なやり取りの抽出を行う  
+扱うデータは優先度付けする必要がある一番大きなデータである非スパム(易)のみ  
+非スパム(難)についてはユーザも判定が難しいため、行動を起こさない前提
+
+一人のユーザからできるだけ多くの素性を取り出したい
+
+```{r}
+# ライブラリとデータの読み込み
+library(tm)
+library(ggplot2)
+library(plyr)
+
+data.path <- "data/mail/"
+easyham.path <- paste(data.path, "easy_ham_train/", sep = "")
+```
+
+送信者のアドレス、件名、メッセージを矩形モデルで取り出すことでデータを構造化
+```{r}
+## 素性ごとに抽出を行うため、全体でのデータ前処理は行わず各関数に委譲する
+parse.email <- function(path) {
+  # メール全体を取り出し
+  full.msg <- msg.full(path)
+  # メールから受信日時を取得
+  date <- get.date(full.msg)
+  # メールから送信者を取得
+  from <- get.from(full.msg)
+  # メールから件名を取り出し
+  subj <- get.subject(full.msg)
+  # メールから本文を取り出し
+  msg <- get.msg(full.msg)
+  # 取り出した値をvectorにして返す
+  return(c(date, from, subj, msg, path))
+}
+
+# メール全体を取り出す関数
+msg.full <- function(path) {
+  con <- file(path, open = "rt", encoding = "latin1")
+  msg <- readLines(con)
+  close(con)
+  return(msg)
+}
+
+# メールのfromを取り出す
+get.from <- function(msg.vec) {
+  # From:の行のみを取り出す
+  # greplで行番号を取得し、msg.vecから該当の行を取得
+  from <- msg.vec[grepl("From: ", msg.vec)]
+  # 正規表現を使って送信者名などを取り除く
+  from <- strsplit(from, '[":<> ]')[[1]]
+  # 空白を取り除く
+  from <- from[which(from != "" & from != " ")]
+  # 「@」が入る部分のみを取り出す
+  return(from[grepl("@", from)][1])
+}
+
+# メールの本文を取り出す
+get.msg <- function(msg.vec) {
+  # 最初の空行から末尾までを取得
+  msg <- msg.vec[seq(which(msg.vec == "")[1] + 1, length(msg.vec), 1)]
+  # 改行で結合
+  return(paste(msg, collapse = "\n"))
+}
+
+# 件名を取得
+get.subject <- function(msg.vec) {
+  # 「Subject:」を含む行を取得
+  subj <- msg.vec[grepl("Subject: ", msg.vec)]
+  # 件名が存在するか確認
+  # greplではマッチしなかったときにinteger(0)やcharactor(0)のような特殊な値を返す
+  if (length(subj) > 0) {
+    # 「Subject: 」でsplitした二つの要素を件名として取得
+    return(strsplit(subj, "Subject: ")[[1]][2])
+  } else {
+    # 件名が無い場合は空文字を返す
+    return("")
+  }
+}
+```
+
+データセットから素性を出すときには何も問題なくできる方がむしろおかしい
+
+#### 受信日時の取得
+ソートなどの操作を行うため、POSIXオブジェクトに変換するが、  
+日付の書式が多岐に渡るためが大変
+```
+Thu, 22, Aug 2002 18:26:25 +0700
+30 Aug 2002 08:50:38 -0500
+Wed, 04 Dec 2002 11:36:32 GTM
+04 Dec 2002 11:49:23 +0000
+```
+など
+
+また、「Date:」が複数ある場合や「X-Original-Date:」というフィールドがある場合もあり、  
+それらの日付が異なっている場合もある
+```{r}
+# 日付を文字列として取り出す
+# ここではDateオブジェクトへの変換は行わない
+get.date <- function(msg.vec) {
+  # X-Original-Dateに引っかからないようにするため、Dateで始まる行のみを取得
+  date.grep <- grepl("^Date: ", msg.vec)
+  # マッチしたインデックスを取得
+  date.grepl <- which(date.grep == TRUE)
+  # 1番目の要素の身を取り出すことで最初のDateを取得
+  date <- msg.vec[date.grepl[1]]
+  # 「Date: 」とタイムゾーンを取り除く
+  date <- strsplit(date, "\\+|\\-|: ")[[1]][2]
+  # 前後の余計な空白を取り除く
+  date <- gsub("^\\s+|\\s+$", "", date)
+  # 日付情報は25文字なので、それ以降は余計なデータとして取り除く
+  return <-strtrim(date, 25)
+}
+```
+
+#### データの読み込み
+```{r}
+easyham.docs <- dir(easyham.path)
+easyham.docs <- easyham.docs[which(easyham.docs != "cmds")]
+easyham.parse <- lapply(easyham.docs, function(p) parse.email(paste(easyham.path, p, sep = "")))
+
+ehparse.matrix <- do.call(rbind, easyham.parse)
+allparse.df <- data.frame(ehparse.matrix, stringsAsFactors = F)
+names(allparse.df) <- c("Date", "From.EMail", "Subject", "Message", "Path")
+
+head(allparse.df)
+```
+
+#### 日付データへの変換
+「%a, %d %b %Y %H:%M:%S」と「%d %b %Y %H:%M:%S」の二つのバリエーションがあるので、  
+その両方をPOSIXへ変換する
+```{r}
+# 2つのパターンに対応したコンバータ
+# 今回は他のパターンが無いので、これで全て値が入る
+date.converter <- function(dates, pattern1, pattern2) {
+  #月、曜日を英語で扱えるようにロケールを設定
+  lct <- Sys.getlocale("LC_TIME")
+  Sys.setlocale("LC_TIME", "C")
+
+  # 文字列をフォーマット指定で日付に変換
+  # オプションが色々あるので、詳細は?strptime
+  pattern1.convert <- strptime(dates, pattern1)
+  pattern2.convert <- strptime(dates, pattern2)
+  # 一つ目のパターンで変換できずNAになったものへ二つ目のパターンの変換結果を代入
+  pattern1.convert[is.na(pattern1.convert)] <- pattern2.convert[is.na(pattern1.convert)]
+  
+  # ロケールを元に戻す
+  Sys.setlocale("LC_TIME", lct)
+  
+  return(pattern1.convert)
+}
+
+pattern1 <- "%a, %d %b %Y %H:%M:%S"
+pattern2 <- "%d %b %Y %H:%M:%S"
+
+allparse.df$Date <- date.converter(allparse.df$Date, pattern1, pattern2)
+# DateをPOSIXct型に変換
+allparse.df$Date <- as.POSIXct(allparse.df$Date)
+```
+
+#### データのクリーニング
+```{r}
+# 件名と送信アドレスを小文字で統一
+allparse.df$Subject <- tolower(allparse.df$Subject)
+allparse.df$From.EMail <- tolower(allparse.df$From.EMail)
+# 時系列昇順でソート
+priority.df <- allparse.df[with(allparse.df, order(Date)), ]
+
+# 前半分とトレーニングデータとして抽出
+priority.train <- priority.df[1:(round(nrow(priority.df) / 2)), ]
+```
+
+### 素性の重み付け
+各素性の尺度について  
+観測された素性間には重みの尺度のちがいがある  
+絶対値として単純な比較ができない
+
+メールの場合80:20の法則  
+やり取り全体のうち、80%のメールはアドレス帳の20%の人とのやり取り
+
+メールの受信での人間関係
+```{r}
+# ddplyを使ってFrom.EMailで集約
+# summariseオプションを使うことでグループに対するそうさとして集計を行う
+# ベクトルのサイズを取得するのにSubjectを利用しているがどの列でもよい
+from.weight <- ddply(priority.train, .(From.EMail), summarise, Freq = length(Subject))
+head(from.weight)
+
+from.ex <- subset(from.weight, Freq > 6)
+from.ex <- from.ex[order(from.ex$Freq), ]
+ggplot(from.ex) +
+geom_rect(aes(xmin = 1:nrow(from.ex) - 0.5, xmax = 1:nrow(from.ex) + 0.5,
+              ymin = 0, ymax = Freq,
+              fill = "lightgrey", color = "darkblue")) +
+scale_x_continuous(breaks = 1:nrow(from.ex), labels = from.ex$From.EMail) +
+coord_flip() +
+scale_fill_manual(values = c("lightgrey" = "lightgrey"), guide = "none") +
+scale_color_manual(values = c("darkblue" = "darkblue"), guide = "none") +
+ylab("Number of Emails Received (truncated at 6)") +
+xlab("Sender Address") +
+theme_bw() +
+theme(axis.text.y = element_text(size = 5, hjust = 1))
+```
+
+#### 対数での重み付け
+ごく一部の人が他と比べて圧倒的に多く出現しているので外れ値となりうる  
+多くのメールを送信してる人からのメールは他の人からより重要と判定され、閾値に影響がでるため  
+対数を取ることで尺度を調整する
+
+自然対数が使われる例
+* オウムガイの内部構造
+* 台風の渦
+* 銀河系の星間物質の散らばり
+* カメラの絞り込み
+
+など  
+メールなどのソーシャルデータも対数を使うと都合が良い
+
+対数は底が大きいほど大きく減少させる
+
+実際のデータで変換を行う際は意味のあるデータが残るような底を選ぶこと
+
+```{r}
+# 0をそのまま使ってしまわないように1を足して自然対数に変換
+# また、今回の場合はlog(1) = 0なので頻度データで0が出現しないようにしている
+# log1pで同等のことができる
+from.weight <- transform(from.weight, Weight = log(Freq + 1))
+head(from.weight)
+```
+
+### スレッド活動量の重み付け
+メールに対する返信を送ったかは観測できない  
+メッセージをスレッドにまとめて活動量を測定することはできる
+
+短い時間で多くのメッセージを送っているスレッドがより活動的
+
+スレッドIDを含まないが、件名の「re:」を利用することでスレッドの一部であることを判定する
+```{r}
+# スレッド取得
+# 「re: 」で始まるもののみを取得してるので返信が始まったタイミングのみ
+# 最初の1通目のメールは取得してない
+find.threads <- function(email.df) {
+  response.threads <- strsplit(email.df$Subject, "re: ")
+  # 先頭の要素が空であれば件名が「re:」で始まっている
+  is.thread <- sapply(response.threads, function(subj) ifelse(subj[1] == "", TRUE, FALSE))
+  threads <- response.threads[is.thread]
+  senders <- email.df$From.EMail[is.thread]
+  threads <- sapply(threads, function(t) paste(t[2:length(t)], collapse = "re: "))
+  return(cbind(senders, threads))
+}
+
+threads.matrix <- find.threads(priority.train)
+head(threads.matrix)
+
+# 全スレッドでの送信者ごとのfrequencyで重み付け
+# スレッド中での送信者とし出てくる人のみに対する重み付け
+email.thread <- function(threads.matrix) {
+  senders <- threads.matrix[, 1]
+  senders.freq <- table(senders)
+  # 送信者、freq, logでmatrixを作成
+  senders.matrix <- cbind(names(senders.freq), senders.freq, log(senders.freq + 1))
+  senders.df <- data.frame(senders.matrix, stringsAsFactors = F)
+  row.names(senders.df) <- 1:nrow(senders.df)
+  names(senders.df) <- c("From.Email", "Freq", "Weight")
+  senders.df$Freq <- as.numeric(senders.df$Freq)
+  senders.df$Weight <- as.numeric(senders.df$Weight)
+  return(senders.df)
+}
+
+senders.df <- email.thread(threads.matrix)
+head(senders.df)
+
+# スレッドのfrequency, 時間, weightを取得
+get.threads <- function(threads.matrix, email.df) {
+  # 件名でユニークを取る
+  threads <- unique(threads.matrix[, 2])
+  thread.counts <- lapply(threads, function(t) thread.counts(t, email.df))
+  thread.matrix <- do.call(rbind, thread.counts)
+  return(cbind(threads, thread.matrix))
+}
+
+# 1スレッドのfrequency, 時間, weightを取得
+thread.counts <- function(thread, email.df) {
+  thread.times <- email.df$Date[which(email.df$Subject == thread | email.df$Subject == paste("re:", thread))]
+  freq <- length(thread.times)
+  min.time <- min(thread.times)
+  max.time <- max(thread.times)
+  # difftime
+  #  時間の差をunitsで指定した単位で取得
+  time.span <- as.numeric(difftime(max.time, min.time, units = "secs"))
+  if (freq < 2) {
+    # トレーニングデータ中にスレッドの開始地点や終了地点が含まれていない可能性があるため、
+    # 一つしか無いデータはNAを返す
+    return(c(NA, NA, NA))
+  } else {
+    # 短期間でやり取りが多いほど活動的
+    # 一秒あたりのメッセージ送信数で取得
+    trans.weight <- freq / time.span
+    # logで重みの尺度を調整
+    # スレッドごとの平均メッセージ数は4.5、時間平均は31000秒なので小さな値となる
+    # 1より小さい値のlogは負になるため、今回は
+    # 常用対数に10をたしてアフィン変換(線形移動)を行うことで正の値にする
+    log.trans.weight <- 10 + log(trans.weight, base = 10)
+    return(c(freq, time.span, log.trans.weight))
+  }
+}
+
+thread.weights <- get.threads(threads.matrix, priority.train)
+thread.weights <- data.frame(thread.weights, stringsAsFactors = F)
+names(thread.weights) <- c("Thread", "Freq", "Response", "Weight")
+thread.weights$Freq <- as.numeric(thread.weights$Freq)
+thread.weights$Response <- as.numeric(thread.weights$Response)
+thread.weights$Weight <- as.numeric(thread.weights$Weight)
+# NAが帰ってきたものは取り除く
+thread.weights <- subset(thread.weights, is.na(thread.weights$Freq) == FALSE)
+head(thread.weights)
+```
+
+headの最初の2行はどちらもfrequencyは4だが、2つ目のほうが短期間でやり取りされているので、  
+weightは高くなっている
+
+重み付けが理にかなった形になっていように設計して、一般的な問題に適用できるかは、  
+職人芸が必要となる  
+どのような重み付けを評価するかは人によって異なる  
+仮定が間違っている可能性も考えられる
+
+### スレッドの頻出単語重み付け
+活発なスレッドに頻出する単語ほど重要であるという仮定  
+活動的だったと思われるスレッドにも重み付けできるように
+
+```{r}
+# tmパッケージを利用して単語ごとの出現数を返す
+term.counts <- function(term.vec, control) {
+  vec.corpus <- Corpus(VectorSource(term.vec))
+  vec.tdm <- TermDocumentMatrix(vec.corpus, control = control)
+  return(rowSums(as.matrix(vec.tdm)))
+}
+
+thread.terms <- term.counts(thread.weights$Thread, control = list(stopwords = stopwords()))
+# 単語の行列のみを取得
+thread.terms <- names(thread.terms)
+
+term.weights <- sapply(thread.terms, 
+                       function(t) 
+                         # termが含まれるスレッドのweightの平均
+                         mean(thread.weights$Weight[grepl(t,
+                                                          thread.weights$Thread,
+                                                          # 不正な正規表現を防いでる?
+                                                          fixed = T)]))
+# data frameに変換
+term.weights <- data.frame(list(Term = names(term.weights), Weight = term.weights),
+                           stringsAsFactors = F, row.names = 1:length(term.weights))
+head(term.weights)
+```
+
+### メッセージ本文の単語出現頻度による重み付け
+スパム分類とほとんど同じ方法で行う  
+変更点としては、対数を用いること
+
+今まで見たことのあるメッセージと似ている内容は全く新しいメッセージより重要であるという暗黙の仮定をおいている
+
+```{r}
+msg.terms <- term.counts(priority.train$Message, control = list(stopwords = stopwords(),
+                                                                removePunctuation = T,
+                                                                removeNumbers = T))
+msg.weights <- data.frame(list(Term = names(msg.terms),
+                               Weight = log(msg.terms, base = 10)),
+                          stringsAsFactors = F,
+                          row.names = 1:length(msg.terms))
+msg.weights <- subset(msg.weights, Weight > 0)
+head(msg.weights)
+```
+
+### 重み付けまとめ
+* from.weight
+ * ソーシャル素性
+ * 送信者ごとの重み
+* sender.df
+ * スレッド中の送信者の活動量
+* thread.weights
+ * スレッドの活動量
+* term.weights
+ * 活動的なスレッドの単語
+* msg.weights
+ * すべてのメールの単語頻度
+ 
+## ランキング
+全ての素性をかけ算して優先度をランキングする  
+メッセージごとに素性を抽出し、訓練データとつきあわせて優先度を出す必要がある
+
+```{r}
+# weight.dfからtermにマッチするもののweightを取得する
+# 複数の項目に対応する場合はそれらの平均
+#  term.weightとthread.weightsでデータフレームの列名が異なっているため
+#  term引数でどちらを使うかを指定
+# 1をかけても結果は変わらないため、異常値の場合は1を返す
+get.weights <- function(search.term, weight.df, term = TRUE) {
+  if (length(search.term) > 0) {
+    if (term) {
+      # match関数で対応する位置を取得
+      term.match <- match(names(search.term), weight.df$Term)
+    } else {
+      term.match <- match(search.term, weight.df$Thread)
+    }
+    # vector中のマッチした要素のみを取得するため
+    #  (match関数では一致しない要素はNAを返す)
+    # NAを取り除く
+    # 一致した要素が全くない場合はすべてのNAが取り除かれ要素数が0となる
+    match.weights <- weight.df$Weight[which(!is.na(term.match))]
+    # マッチしたものが無い場合は1を返す
+    if (length(match.weights) < 1) {
+      return(1)
+    } else {
+      return(mean(match.weights))
+    }
+  } else {
+    # termが空のvectorの時は1を返す
+    return(1)
+  }
+}
+
+rank.message <- function(path) {
+  msg <- parse.email(path)
+  
+  # 送信者が学習データに登録されているものであればそのweightを、
+  # 無ければ1を入れる
+  from <- ifelse(length(which(from.weight$From.email == msg[2])) > 0,
+                 from.weight$Weight[which(from.weight$From.EMail == msg[2])], 1)
+  
+  # スレッドの送受信履歴のweight
+  thread.from <- ifelse(length(which(senders.df$From.Email == msg[2])) > 0, 
+                        senders.df$Weight[which(senders.df$From.Email == msg[2])], 1)
+  
+  # スレッド活動量の取得
+  subj <- strsplit(tolower(msg[3]), "re: ")
+  is.thread <- ifelse(subj[[1]][1] == "", TRUE, FALSE)
+  if (is.thread) {
+    activity <- get.weights(subj[[1]][2], thread.weights, term = F)
+  } else {
+    activity <- 1
+  }
+  
+  # 件名のweight取得
+  thread.terms <- term.counts(msg[3], control = list(stopwords = stopwords()))
+  thread.terms.weights <- get.weight(thread.terms, term.weights)
+  
+  # 本文のweight取得
+  msg.terms <- term.counts(msg[4], control = list(stopwords = stopwords(), 
+                                                  removePunctuation = T,
+                                                  removeNumbers = T))
+  msg.terms.weights <- get.weights(msg.terms, msg.weights)
+  
+  # スコア計算
+  rank <- prod(from, thread.from, activity, thread.terms.weights, msg.terms.weights)
+  
+  # 送信日時、送信者、件名、スコアを返す
+  return(c(msg[1], msg[2], msg[3], rank))
+}
+
+# 前半分がトレーニングデータ
+train.paths <- priority.df$Path[1:(round(nrow(priority.df) / 2))]
+# 後ろ半分がテストデータ
+test.paths <- priority.df$Path[(round(nrow(priority.df) / 2) + 1):nrow(priority.df)]
+
+# トレーニングデータでdata frame作成
+# lapplyの結果で警告が出るが、仕様通りの結果なので気にしなくてよい
+train.ranks <- lapply(train.paths, rank.message)
+train.ranks.matrix <- do.call(rbind, train.ranks)
+train.ranks.matrix <- cbind(train.paths, train.ranks.matrix, "TRAINING")
+train.ranks.df <- data.frame(train.ranks.matrix, stringsAsFactors = F)
+names(train.ranks.df) <- c("Message", "Date", "From", "Subj", "Rank", "Type")
+train.ranks.df$Rank = as.numeric(train.ranks.df$Rank)
+
+# 中央値を閾値とする
+priority.threshold <- median(train.ranks.df$Rank)
+
+# 優先メールかを閾値を用いて判断
+train.ranks.df$Priority <- ifelse(train.ranks.df$Rank >= priority.threshold, 1, 0)
+head(train.ranks.df)
+```
+
+閾値を決めるのに過去の事例を使っていないので一般的なやり方とは異なる  
+また、中央値を選んだ理由として
+* 通常優先すべきメールは他のものと比べてわずかな量になる
+* 優先度の分布は偏ったものになる
+* 山側の所に分布するはず
+
+これは人間が考える推薦方法と似ている
+
+また、テストデータはトレーニングデータのどれとも一致しないメールである可能性もある  
+データを更新することを考えていないため、排他的ではなく包括的な基準を選んだ
+
+```{r}
+ggplot(train.ranks.df, aes(x = Rank)) +
+  stat_density(aes(fill="red")) +
+  geom_vline(xintercept = priority.threshold, linetype = 2) +
+  scale_fill_manual(values = c("red" = "red"), guide = "none") +
+  theme_bw()
+```
+
+### テストデータの優先度計算
+トレーニングデータと同じ処理をする
+```{r warning=TRUE}
+test.ranks <- lapply(test.paths, rank.message)
+test.ranks.matrix <- do.call(rbind, test.ranks)
+test.ranks.matrix <- cbind(test.paths, test.ranks.matrix, "TESTING")
+test.ranks.df <- data.frame(test.ranks.matrix, stringsAsFactors = F)
+names(test.ranks.df) <- c("Message", "Date", "From", "Subj", "Rank", "Type")
+test.ranks.df$Rank = as.numeric(test.ranks.df$Rank)
+# thresholdはトレーニングデータのものを利用
+test.ranks.df$Priority <- ifelse(test.ranks.df$Rank >= priority.threshold, 1, 0)
+head(test.ranks.df)
+head(train.ranks.df)
+```
+
+### データの結合と比較
+```{r warning=FALSE}
+# データの結合
+final.df <- rbind(train.ranks.df, test.ranks.df)
+# Dateを日付型にする
+final.df$Date <- date.converter(final.df, pattern1, pattern2)
+# 日付降順でソート
+#final.df <- final.df[rev(with(final.df, order(Date))), ]
+final.df <- final.df[order(final.df$Date, decreasing = T), ]
+head(final.df)
+
+ggplot(subset(final.df, Type == "TRAINING"), aes(x = Rank)) +
+  stat_density(aes(fill = Type, alpha = 0.65)) +
+  # データの追加
+  stat_density(data = subset(final.df, Type == "TESTING"),
+               aes(fill = Type, alpha = 0.65)) +
+  geom_vline(xintercept = priority.threshold, linetype = 2) +
+  scale_alpha(guide = "none") +
+  scale_fill_manual(values = c("TRAINING" = "darkred", "TESTING" = "darkblue")) +
+  theme_bw()
+```
+
+### 考察
+テストデータにはトレーニングデータより優先度が低い位置にデータが多い
+* 優先度の低いメールが多い
+* トレーニングデータほど密度がなだらかでない
+
+テストにはトレーニング時に含まれていない事象が多く含まれている  
+順位付け時に無視される
+
+今回は包括的な指標としているため、問題がおこっていない  
+閾値の線より右側にもそれなりのデータが残っているため、優先メールの推薦はできている
+
+この種の優先度付けには未知の量が存在する  
+今回は設計時に素性に対して仮説を設定しているが、  
+本質的によいかの評価基準はユーザによって判断されるため確認できない  
+分類問題のような正解データとのセットが無いため、同じ指標では確認できないため推察のみとなる
+
+データの考察
+```{r}
+head(test.ranks.df[order(test.ranks.df$Rank, decreasing = T), ][2:5], 40)
+```
+
+* 同一スレッド順位付けがスレッドをうまくまとめている
+* 高頻度な送信者からのメールが高い優先度を持っている
+* トレーニングデータ中には無かったメッセージの優先度付けを行えている
+ * 全体の12%ではあるが、トレーニングデータから続きのスレッドも優先度が高くなっている
+ * 推薦を行うことができている
+
+ヒューリスティックな順位付けを行うランキング学習の例であった

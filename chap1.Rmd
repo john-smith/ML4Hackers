@@ -190,6 +190,7 @@ us.states <- c("ak", "al", "ar", "az", "ca", "co", "ct", "de", "fl", "ga", "hi",
               "in", "ks", "ky", "la", "ma", "md", "me", "mi", "mn", "mo", "ms", "mt", "nc", "nd",
               "ne", "nh", "nj", "nm", "nv", "ny", "oh", "ok", "or", "pa", "ri", "sc", "sd", "tn",
               "tx", "ut", "va", "vt", "wa", "wv", "wy")
+#us.states <- tolower(state.abb) # USの州名
 
 # 必要なものだけ取り出す
 # ufo.us <- ufo[ufo$USState %in% us.states, ]) # たぶんこっちでもいける
