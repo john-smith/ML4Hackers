@@ -1,0 +1,483 @@
+# chapter5
+## 回帰とは
+与えられた数値群から別の数値を予測する
+* 保険数理士(アクチュアリ)が喫煙歴から寿命を予測
+* 気象予報士が前日の気温から翌日の気温を予測
+
+など
+
+与えられる数値:入力変数、予測変数、特徴量、説明変数  
+予測したい数値：出力変数、目的変数  
+などと呼ぶ
+
+分類との違いは、出力変数が実数値であるということ  
+スパム分類ではダミー変数を用意したが、内部処理用の記号であり、数値として扱っていた訳ではない
+(分類はダミー変数を使った離散的な回帰として扱うこともできる)
+
+回帰を行うと入出力の関係について主張したくなるが、  
+数値的に予測したことと実際に予測が一致するとは限らない
+
+定量的な予測には入手可能な情報に基づいて規則を考えておく必要がある
+
+今回は線形回帰を扱う
+
+## ベースラインモデル
+回帰の最も単純な方法は入力を無視して出力を決める方法  
+寿命予測であれば常に平均寿命と同じだけ生きると仮定するなど
+
+他の情報が一切無い時に平均を予測値として出力するのはいい方法と言える
+
+喫煙者か死亡年齢に関するデータ  
+概要をのぞく
+```{r}
+library(ggplot2)
+ages <- read.csv("data/longevity.csv")
+ages[c(1:5, 501:505), ]
+
+ggplot(ages, aes(x = AgeAtDeath, fill = factor(Smokes))) +
+  geom_density() +
+  facet_grid(Smokes ~ .) +
+  theme_bw()
+```
+中心のずれから喫煙が寿命に悪影響を与えている様子が伺える
+
+事前情報が与えられていない場合は喫煙習慣に関わらず一定の値を予測する必要がある  
+どのような値を選ぶのが適切か
+
+よい予測がどういったものかを定義する必要がある  
+よく使われるのが予測した数値hと実測値yの二乗誤差である$(y - h) ^ 2$
+
+二乗誤差が使われるのは習慣だけでなく他にも色々理由がある  
+二乗誤差を予測の質として利用すると、追加の情報が無い場合の最もよい予測値は平寿命均となる
+
+MSE(Mean Squared Error)を用いて平気寿命を推定値として利用したときにどの程度外れるかを調べる
+```{r}
+# おおよその平均値
+guess <- round(mean(ages$AgeAtDeath))
+# 平均からの二乗の平均値
+with(ages, mean((AgeAtDeath - guess) ^ 2))
+```
+この結果だけでは平均値を使った推定以外がこの値より低くなる証明にはならない  
+他の値も利用してやってみる
+```{r}
+# 空のdata frameを用意
+guess.accuracy <- data.frame()
+# 63から83まで(平均±10)の範囲でやってみる
+for(guess in seq(63, 83, by = 1)) {
+  prediction.error <- mean((ages$AgeAtDeath - guess) ^ 2)
+  # rbindでdata frameに値を追加していく
+  guess.accuracy <- rbind(guess.accuracy, data.frame(Guess = guess, Error = prediction.error))
+}
+
+ggplot(guess.accuracy, aes(x = Guess, y = Error)) +
+  geom_point() +
+  geom_line() +
+  theme_bw()
+```
+
+結果から、平均値以外の推定は今回のデータセットに対しては悪い値になっていることがわかる  
+これは数学的に証明でき、一般化できる
+
+二乗誤差を最小化するにはデータセット中の平均値を予測すればよい
+
+喫煙に関する情報を取り入れることにより、予測力が向上するかを測定する
+
+## ダミー変数
+どのように追加情報を取り入れて予測するか  
+単純な考え方では、喫煙者と非喫煙者で個別に平均寿命を計算して、その値を推測値とする
+
+RMSE(Root Mean Squared Error, MSEの平行根)を使って行う  
+機械学習ではよく使われる指標
+```{r}
+contents.guess <- with(ages, mean(AgeAtDeath))
+with(ages, sqrt(mean((AgeAtDeath - contents.guess) ^ 2)))
+
+smokers.guess <- with(subset(ages, Smokes == 1), mean(AgeAtDeath))
+non.smokers.guss <- with(subset(ages, Smokes == 0), mean(AgeAtDeath))
+ages <- transform(ages, NewPrediction = ifelse(Smokes == 0, non.smokers.guss, smokers.guess))
+with(ages, sqrt(mean((AgeAtDeath - NewPrediction) ^ 2)))
+```
+情報の追加を行うことで、RMSEが約10%程度低下し、予測精度が改善されていることがわかる
+
+一般的に、データポイントが出力変数と関連して2種類に分けられるとき  
+グループごとに平均を取ることでよりよい予測結果となる
+
+男女や政党(民主か共和か)などを比較するなど
+
+## 線形回帰
+連続値や複数の入力変数の組み合わせなど、より多くの情報を取り入れるにはどうすればよいか  
+実際には全ての情報を取り入れるのは簡単ではなく、物事を単純化する仮定をおいてうまく組み合わせる
+
+線形回帰は以外と制限がすくなく、現実の90%の回帰問題を解くことができる  
+少しの改良でより高度な回帰も行える
+
+### 線形回帰の仮定
+* 可分性/加法性
+ * 複数の情報源が独立で他の影響を受けない
+ * 足し合わせることで予測(加法性)
+ * 相互作用(可分性)については別途
+* 単調性/線形性
+ * 入力変数を変えたときに出力変数が常に増加または減少する(単調)
+ * 単調性は線形性よりも弱い仮定
+ * 入力と出力の関係が直線的(線形性)
+ * 曲線や波になっていたら線形では無い
+ * 数学的には入力が1変更すると常にN(一定の値)だけ増加または現象する
+ * 線形モデルは全て単調だが、単調だが線形じゃないものも存在する
+
+線形回帰はデータを可視化したときに直線的に見えるものの時にうまく動作するが、  
+線形ではないモデルにたいしての適用も不可能ではない
+
+曲線、直線、波の例
+```{r}
+x = seq(0, 1, 0.01)
+curve <- data.frame(x = x, y = x ^ 2, type = "curve")
+line <- data.frame(x = x, y = x, type = "line")
+wave <- data.frame(x = x, y = (1/ 2) * sin(2 * pi * x) + 1 / 2, type = "wave")
+all <- rbind(curve, line, wave)
+
+ggplot(all, aes(x = x, y = y)) +
+  geom_line() +
+  facet_wrap(~type, nrow = 1, ncol = 3) +
+  theme_bw()
+```
+
+### 回帰直線の図示
+身長と体重のデータを利用
+```{r}
+heights.weights <- read.csv("data/heights_weights_genders.csv", header = T, sep = ",")
+ggplot(heights.weights, aes(x = Height, y = Weight)) +
+  geom_point() +
+  geom_smooth(method = "lm") + # 回帰直線を引く(methodにlm(lenear model)を指定することで線形)
+  theme_bw()
+```
+直線で身長から体重を予測するのはかなりうまく行くということがわかる  
+この直線の式をどのように見つければよいか
+
+### 回帰直線の式
+Rにはlmという関数が存在する  
+こいつを使えばモデル式を与えるだけで、必要なことは全て行ってくれる  
+モデル式は「y ~ x」のよう形で出力変数と入力変数の式を「~」の前後に置く
+
+これプラス、データを指定すれば線形回帰が可能となる  
+必要なデータをグローパル変数におけば指定しなくてもいいが、  
+どのデータがメモリに読み込まれてかなど管理が難しくなるのであまり使わないようにしよう
+
+身長体重に関する回帰分析
+```{r}
+# 身長から体重を予測
+fitted.regression <- lm(Weight ~ Height, data = heights.weights)
+fitted.regression
+```
+
+次にcoef関数で係数を取得する  
+3次元以上でも回帰は行えるため、直線ではなく線形モデルと呼ぶことにする
+```{r}
+coef(fitted.regression)
+
+# 切片を取得
+(intercept <- coef(fitted.regression)[1])
+# 傾きを取得
+(slope <- coef(fitted.regression)[2])
+```
+
+傾き:増加率(ここではxが1あがるごとにyは7.7あがる)  
+切片:0の時のyの値  
+ここではマイナスになっていて、身長45インチの時に体重が0になる、  
+子供や身長の低い人には有効ではないモデル
+
+これは線形回帰の一般的な問題点で、観測された入力から離れた位置にある点に関しては  
+あまりよい出力を行えない
+
+範囲外のデータに対する推測の質を改善する方法もあるが、  
+今回の場合、一般的な身長の人が対象のため、問題ない
+
+係数を確認する以外にもRの線形回帰でできることはいろいろあるが、  
+全てを解説すると膨大な量になるため、今回は係数抽出後の重要な部分のみを扱う
+
+実際、予測の際には係数しか使わない
+
+### モデルの予測
+predict関数を用いる
+```{r}
+# 各値に対しての結果を出力すると多すぎるため、headで先頭のみを出力
+head(predict(fitted.regression))
+```
+
+真の出力との予測の違いを求める
+
+真の値と予測値の差である残差を求めることで線形モデルで説明できる部分を除いた  
+残りの部分を出すことができる
+```{r}
+true.value <- heights.weights$Weight
+errors <- true.value - predict(fitted.regression)
+# predictと同様の理由でheadで出力
+head(errors)
+
+# residualsで直接求めることも可能
+# predictと同様の理由でheadで出力
+head(residuals(fitted.regression))
+
+# 残差のプロット
+# lmの結果のプロットでは複数のグラフが生成されるので、
+# whichで最初のグラフのみを出力するように指定
+plot(fitted.regression, which = 1)
+```
+
+残差に規則的な構造が見れれると線形モデルがうまく行ってないと考えられる
+
+残差に明確な構造がありモデル化がうまく行ってない例
+```{r}
+x <- 1:10
+y <- x ^ 2
+fitted.regression <- lm(y ~ x)
+plot(fitted.regression, which = 1)
+```
+
+データはモデルによって予測できた部分とパターンで表せなかったノイズに分けれられる
+残差はノイズ部分に相当するので、はっきりとした傾向があるということはパターン化できていない  
+要素が残されているということ
+
+今回の場合は表現力が十分でないため、二次の曲線をモデル化できなかった
+
+より強力なモデルを使うときは毒との問題があるので、注意すること
+
+### モデルの精度評価
+残差は多くの情報を与えてくれるが、データ数が多いと扱うのが大変
+
+残差平方和を求めることで要約する
+```{r}
+errors <- residuals(fitted.regression)
+squared.errors <- errors ^ 2
+sum(squared.errors)
+```
+
+二乗和は異なるモデルの比較に便利だが、問題もある
+
+データ数が大きいと値が大きくなる
+```{r}
+x <- 1:10
+y <- x ^ 2
+fitted.regression <- lm(y ~ x)
+sum(residuals(fitted.regression) ^ 2)
+
+x2 <- 1:20
+y2 <- x2 ^ 2
+fitted.regression2 <- lm(y2 ~ x2)
+sum(residuals(fitted.regression2) ^ 2)
+```
+
+二乗和そのものでは無く平均を取ることで解決(MSEと同じ)
+```{r}
+mean(residuals(fitted.regression) ^ 2)
+mean(residuals(fitted.regression2) ^ 2)
+
+# 元データと尺度をあわせるためRMSEを求める
+# RMSEは線形回帰以外でも機械学習の評価によく使われている
+# Netflixのコンテストの評価基準でも使われた
+sqrt(mean(residuals(fitted.regression) ^ 2))
+```
+
+RMSEの問題点はどの程度の値であれば性能がよいかをすぐに判断できないこと  
+0であれば完璧であるが、目指すところはそこではない
+
+また、RMSEは予測の値が真の値と離れているほど際限なく大きくなる
+
+$R ^ 2$(決定係数)を使って評価を行うことで常に0~1の範囲で評価できる  
+(1であれば全て予測しており、0であれば何もできてない)  
+100倍することでパーセント表示で予測できている割合にすることもできる
+```{r}
+# 常にデータの平均値を返すモデルのRMSE
+mean.rmse <- with(heights.weights, sqrt(mean((Weight - mean(Weight)) ^ 2)))
+fitted.regression <- lm(Weight ~ Height, data = heights.weights)
+# 予測モデル
+model.rmse <- sqrt(mean(residuals(fitted.regression) ^ 2))
+# R^2 = 1 - (平均から誤差RMSE / モデルのRMSE)
+r2 <- 1 - (model.rmse / mean.rmse)
+r2
+```
+
+## ウェブのアクセス数予測
+2011年のアクセス数のトップ1000のデータのうち上位5件
+```{r}
+top.1000.sites <- read.csv("data/top_1000_sites.tsv", sep = "\t", stringsAsFactors = F)
+head(top.1000.sites, 5)
+```
+今回注目するデータ  
+線形回帰の質は入力変数の質に依存するので重要なものが抜け落ちないように注意  
+余分なデータにも注意
+* Rank
+ * 順位
+ * 離散的な値なので、1.5位が何かなどは意味がない
+ * 値を指定すれば一意に他の情報がわかる
+ * A, B, C, Dなどに置き換えても情報が失われない
+* PageViews
+ * 訪問された回数
+ * Facebookのような常連がいるサイトの人気度を測るのに使える
+ * ページビューとユニークユーザを比較してどんなサイトに初見が多いのかを調べてみるのもいいかも
+* UniqueVisitors
+ * 1ヶ月単位で訪れた異なるユーザの総数
+ * PVは更新などで水増しできるため、こちらのほうが影響力を測る重要な指標となっている
+* HasAdvertising
+ * 広告を掲載しているか
+ * 広告は邪魔なので他が全く同じ条件なら掲載しているサイトを避けようとすると考えられる
+ * 線形回帰のいいところは他が同じ条件の時、ある特徴量が予測にどう影響するかを調べられるところ
+* IsEnglish
+ * 英語サイトであるか
+ * リスト内ではほとんどが英語か中国語サイト
+ * 英語であることが肯定的にはたらくか否定的にはたらくかを調べる
+ * 回帰では因果関係やその方向性は明確にできないということを示す例
+ * 英語だから人気か、人気なものが結果的に英語サイトが多いのかなどはわからない
+ * 関係しているということしかわからない
+
+ページビューを出力変数として、それ以外を入力変数として扱う
+
+PVとUUの関連性を見るため散布図にしてみる(最初に必ずやろう)
+```{r}
+ggplot(top.1000.sites, aes(x = PageViews, y = UniqueVisitors)) +
+  geom_point() +
+  theme_bw()
+```
+
+ほとんどがx軸付近付近に固まる特殊な分布となってしまった  
+一部の例外のために、尺度が大きくなってしまったため、ほとんどのデータが近くに配置された
+
+状況確認ため、PV自体の分布をみる
+```{r}
+ggplot(top.1000.sites, aes(x = PageViews)) +
+  geom_density() +
+  theme_bw()
+```
+これもほとんど意味不明なので、logをとって変化をなだらかにする
+```{r}
+ggplot(top.1000.sites, aes(x = log(PageViews))) +
+  geom_density() +
+  theme_bw()
+```
+これまでものと比較して、いい感じに内容が確認できる  
+今後このデータを扱うときは対数変換することとする
+
+PVとUUの対数変換した散布図
+```{r}
+ggplot(top.1000.sites, aes(x = log(PageViews), y = log(UniqueVisitors))) +
+  geom_point() +
+  theme_bw()
+
+# scaleでlog10に変換することもできる
+# この場合logp処理をしてくれるので問題にならない
+ggplot(top.1000.sites, aes(x = PageViews, y = UniqueVisitors)) +
+  geom_point() +
+  scale_x_log10() +
+  scale_y_log10() +
+  theme_bw()
+
+# scalesを使うことで任意の底を使える
+library(scales)
+ggplot(top.1000.sites, aes(x = PageViews, y = UniqueVisitors)) +
+  geom_point() +
+  scale_x_continuous(trans = log_trans(exp(1))) +
+  scale_y_continuous(trans = log_trans(exp(1))) +
+  theme_bw()
+```
+
+回帰による直性近似でできそうなので、geom_smoothでやってみる
+```{r}
+ggplot(top.1000.sites, aes(x = log(PageViews), y = log(UniqueVisitors))) +
+  geom_point() +
+  geom_smooth(method = "lm", se = F) + # se = FALSEで分散の範囲を出さない
+  theme_bw()
+```
+
+lmで回帰してみる
+```{r}
+lm.fit <- lm(log(PageViews) ~ log(UniqueVisitors), data = top.1000.sites)
+# 要約を見る
+summary(lm.fit)
+```
+1. lmの式
+色々やってるとどのモデル使ってんのかわかんなくなった時などに便利
+2. residualsのquantile(residuals(lm.fit)) = `r quantile(residuals(lm.fit))`と同じ)
+データの要約は散布図、残差のmax,minなど使いやすいものを使おう  
+散布図は全データあるから情報量が多い
+3. coef関数よりも詳細なCofficient情報(coef関数で取得できるのはEstimateのみ)
+予測値の誤差(std. Error)、t値(t value)、p値(Pr(>|t|))が表示される
+詳細は統計を勉強すべし
+4. RMSE(squrt(mean(residuals(lm.fit) ^ 2)))で求められる
+degree of freedomは自由度(データ数 - 係数の数)。今回は傾き1つと切片
+この値が小さすぎると過学習を起こすので注意
+5. 決定係数、自由度調整済み決定係数
+6. F統計量
+予測に平均値を使った場合からの改善度
+
+5, 6は訓練データに対する性能なので予測能力を評価してるわけではないのに注意
+
+UU以外のデータも加えて予測する
+```{r}
+# 各項目の線形結合
+lm.fit <- lm(log(PageViews) ~ HasAdvertising + log(UniqueVisitors) + InEnglish, data = top.1000.sites)
+summary(lm.fit)
+```
+単一の入力変数との違いは  
+全ての変数に対する係数が含まれている
+
+モデルにfactorが含まれている場合は  
+切片の一部として取り扱うか、明示的に組み込むかする必要がある
+
+HasAdvertisingはYesの時は切片からは切り離され、Noの時は切片に組み込まれてる  
+広告なしで、log(UU)が0の時が切片の値となる  
+
+InEnglishはNAが多いため、NA, No, Yesの3つの値を取っている  
+RではNAをデフォルトで切片として利用するため、Yes, Noは個別に係数が与えられている
+
+個別の予測力を決定係数で調べる
+```{r}
+lm.fit <- lm(log(PageViews) ~ HasAdvertising, data = top.1000.sites)
+summary(lm.fit)$r.squared
+
+lm.fit <- lm(log(PageViews) ~ log(UniqueVisitors), data = top.1000.sites)
+summary(lm.fit)$r.squared
+
+lm.fit <- lm(log(PageViews) ~ InEnglish, data = top.1000.sites)
+summary(lm.fit)$r.squared
+```
+簡単に集められるなら全てを入力としてもよいが、  
+集めるのが難しいデータはモデルから外して他の予測力が高いものに注力するのもあり
+
+## 相関
+2つの変数の関係を直線で記述できるとき相関を持つと言う  
+線形回帰でどれだけ2つの変数の関係性をモデル化できるかの指標になる
+
+相関係数が0であれば意味のある直線を引くことは全く不可能  
+1である場合は右肩上がりで完全に全データが直線上に乗る  
+-1であれば右肩下がりで完全に直線に乗る
+
+線形でないデータ  
+全てのデータポイントを正確に通るわけではないため、完全な線形にはならないが  
+どれだけ線形に近いかを相関係数で表す
+```{r}
+x <- 1:10
+y <- x ^ 2
+
+ggplot(data.frame(x = x, y = y), aes(x = x, y = y)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = F) +
+  theme_bw()
+
+# 相関係数を求める
+cor(x, y)
+```
+|相関係数|が1に近いほど直線に近いデータ  
+xとyがかなり直線に近い関係性を持っている
+
+lmの結果を使って自力で相関係数を求める  
+変数から平均を引いて、標準偏差で割る正規化を
+回帰に使うのx, yそれぞれにやっておく必要がある
+```{r}
+# scale関数で正規化
+coef(lm(scale(y) ~ scale(x)))
+```
+相関係数と正規化後に線形回帰した時の係数が一致する  
+相関係数一般について言える性質なので、  
+線形回帰を行うときは2つの変数に相関があることを念頭においておくこと
+
+相関係数は関係性がどれだけ線形に近いかを測る基準なので  
+因果関係はここからは和からに

@@ -9,6 +9,8 @@
 リポジトリには含めない  
 必要に応じて著者のリポジトリか、本家から取得する
 
+なお、本家が記載されていないデータに関してはすべて著者のリポジトリからコピーして利用している
+
 本家のダウンロード先は
 * UFO
  * http://www.infochimps.com/datasets/60000-documented-ufo-sightings-with-text-descriptions-and-metada
