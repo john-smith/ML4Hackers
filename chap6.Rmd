@@ -1,0 +1,573 @@
+# chapter6
+```{r}
+library(ggplot2)
+library(glmnet)
+library(tm)
+```
+
+## 直線で表せないデータの線形回帰
+直線では表せないデータに対しても線形回帰を使える
+
+## 直線の限界
+直線では表せない関数をGAMを使って曲線でフィッティングする
+```{r warning=FALSE}
+# 回帰線が見づらいのでデータを少なくした
+set.seed(1)
+x <- seq(-10, 10, 0.1)
+# y = -x^2 + 1 に正規分布のランダムノイズをのせたもの
+y <- 1 - x ^ 2 + rnorm(length(x), 0, 5)
+# 直線で表せないデータのlmでの回帰
+ggplot(data.frame(x = x, y = y), aes(x = x, y = y)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = F) + 
+  theme_bw()
+
+# 残差プロットをみて状況確認
+# xの値が大きすぎたり、小さすぎたりするとyの予測値が大きくなりすぎる
+# 中程度の値だと小さくなる
+plot(lm(y ~ x), which = 1)
+
+# geom_smoothのデフォルト実装である一般化加法モデル(Generalized Additive Model: GAM)
+ggplot(data.frame(x, y), aes(x, y)) +
+  geom_point() +
+  geom_smooth(se = F) +
+  theme_bw()
+```
+
+## 曲線でのフィッティング
+線形回帰では直線を入力に当てはめることしかできないが、  
+入力に対する非線形な関数関数を作り、新たな入力とする
+
+線形仮説を満たすように、もとの非線形問題をを別なものに変形した  
+複雑な非線形問題を単純な線形問題に置き換えるのは機械学習でよくある  
+カーネルトリック野根幹をなすものでもある
+```{r}
+x.squared <- x ^ 2
+ggplot(data.frame(x = x.squared, y = y), aes(x, y)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = F) +
+  theme_bw()
+```
+
+予測精度がどのくらいあがったかを$R^2$で比較
+```{r}
+summary(lm(y ~ x))$r.squared
+summary(lm(y ~ x.squared))$r.squared
+```
+
+ほぼ全く説明できてきなかったものを97%の精度で予測できるようになった  
+モデルに単純な変化しか加えてないにしては大きな成果
+
+本質的には2つの変数間に存在するどのような種類の関係でもとらえることができる
+
+## 多項式回帰
+より複雑なアプローチ  
+データのノイズまで拾ってしまうこともあるので注意が必要  
+
+poly関数で多項式回帰を行える
+
+対象とするデータの生成
+```{r}
+set.seed(1)
+x <- seq(0, 1, by = 0.01)
+# xラジアンに対しての、sin(x) にランダムノイズをのせたもの
+y <- sin(2 * pi * x) + rnorm(length(x), 0, 0.1)
+df <- data.frame(x, y)
+
+ggplot(df, aes(x, y)) + 
+  geom_point() +
+  theme_bw()
+```
+
+あきらかに直線では無いこの式にとりあえず線形モデルを当てはめてみる
+```{r}
+summary(lm(y ~ x), data = df)
+```
+不適切なモデルでも$R^2$でおよそ60%のデータを説明できている
+
+なぜうまくいったかを図示して確認
+```{r}
+ggplot(df, aes(x, y)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = F) +
+  theme_bw()
+```
+サインカーブの右肩下がりの部分をが直線で近似できている  
+しかし、それ以外の部分は捨ててしまっているので、あまりいい方法ではない  
+周期を増やすと、$R^2$は一気に0%近くまで落ち込むことは容易に想像がつく
+
+データセット特有のクセに対して過学習してしまい、本来の波状構造を見つけれていない
+
+このアルゴリズムにさらに多くの入力を耐えた場合、波状構造を見つけられるか、  
+データセットに素性を追加して試してみる
+```{r}
+# x^2とx^2をデータに追加
+df <- transform(df, x2 = x ^ 2, x3 = x ^ 3)
+# 全ての素性を使って線形回帰
+summary(lm(y ~ x + x2 + x3, data = df))
+```
+予測精度が大鼻に向上している
+
+データセットにxの冪上を追加していけばどんどん精度を向上させていける  
+あるところでデータポイントより入力変数のほうが多くなってしまうとそれが厄介な問題となる
+
+それ以前にこの戦略には微妙な問題がある  
+データを追加していくと既存の列の値とよく似ているため、lmが動かなくなってしまう(特異性:singularity)
+```{r}
+df <- transform(df, x4 = x ^ 4, x5 = x ^ 5, x6 = x ^ 6, x7 = x ^ 7,
+                x8 = x ^ 8, x9 = x ^ 9, x10 = x ^ 10, x11 = x ^ 11, x12 = x ^ 12,
+                x13 = x ^ 13, x14 = x ^ 14, x15 = x ^ 15)
+summary(lm(y ~ x + x2 + x3 + x4 + x5 + x6 + x7 + x8 + x9 + x10 + x11 + x12 + x13 + x14,
+           data = df))
+```
+Coefficientsに(1 not defined because of singularities)
+で特異性の問題が起こっていることが表示されている
+
+この問題は大きな冪上入力が既にある行と相関が高すぎるため、  
+全ての列に別々の係数を見つけられず、線形回帰が正常でできなくなったことを意味している
+
+この問題の解決策として、盲目的に冪上を追加するのではなく、  
+それぞれに相関が無いような複雑なxの変種を追加していく方法がある(直交多項式)
+
+polyのdegree変数を利用して、14次の直交多項式を求める  
+内部処理は見れないが、正しく動作していることは確認できる
+```{r}
+# 線形回帰のモデルにpoly関数で多項式を使う
+# degreeで次数を設定できる
+summary(lm(y ~ poly(x, degree = 14), data = df))
+```
+14個の変数に全てに係数を返すことができているのが確認できる
+
+poly関数では多くの表現力を得ることができる  
+ただし、これが必ずしもいいとは限らない
+
+表現力が問題を起こす場面をパラメータを増やして確認
+```{r}
+poly.fit <- lm(y ~ poly(x, degree = 1), data = df)
+df <- transform(df, PredictedY = predict(poly.fit))
+ggplot(df, aes(x, PredictedY)) +
+  geom_point() +
+  geom_line() +
+  theme_bw()
+
+poly.fit <- lm(y ~ poly(x, degree = 3), data = df)
+df <- transform(df, PredictedY = predict(poly.fit))
+ggplot(df, aes(x, PredictedY)) +
+  geom_point() +
+  geom_line() +
+  theme_bw()
+
+poly.fit <- lm(y ~ poly(x, degree = 5), data = df)
+df <- transform(df, PredictedY = predict(poly.fit))
+ggplot(df, aes(x, PredictedY)) +
+  geom_point() +
+  geom_line() +
+  theme_bw()
+
+poly.fit <- lm(y ~ poly(x, degree = 25), data = df)
+df <- transform(df, PredictedY = predict(poly.fit))
+ggplot(df, aes(x, PredictedY)) +
+  geom_point() +
+  geom_line() +
+  theme_bw()
+```
+次数を増やしすぎると明らかにもはや波形ではなくなって歪み始めている
+
+使っているモデルがデータよりも強力であるのが原因  
+過学習が発生している
+
+データが増えればその分強力なモデルを使いたくなるが、
+強すぎるモデルが常に存在する
+
+## 過学習を防ぐ
+交差検定と正則化を行う
+
+### 過学習
+モデルが内在する真のパターンではなく、データのノイズの一部を拾ってしまってる状態  
+真実とは何かを明確にすることでこの問題を防ぐ
+
+学習したデータではなく未知のデータに対しての予測性能でその精度を決める  
+未来のデータを入手することはできないで、既知の全てのデータを学習に使わず、
+データを分割することでシミュレートする
+
+## 交差検定
+交差検定では過去データの一部を使わないことで未来のデータに対してのシミュレーションを行える  
+3,4章でやったのが全く同じこと
+
+1. 仮説をたて
+2. データを集め
+3. それを検証する
+
+という流れ  
+仮説を立てたあとにデータを集めにいく訳では無いのでこのような手法となる
+
+### 正弦波に対する交差検定を使った次数選択
+学習には多くのデータを使った方が精度がよくなるので  
+データを半分に分けるのではなく、訓練データを多くするなどのやり方もある
+
+訓練セットとテストセットの差異が規則的になってしまわないように  
+分割はランダムにしたほうがよい  
+```{r}
+set.seed(1)
+x <- seq(0, 1, 0.01)
+y <- sin(2 * pi * x) + rnorm(length(x), 0, 0.1)
+
+n <- length(x)
+# sample関数で1~nまでの乱数をサイズの1/2個取得
+indices <- sort(sample(1:n, round(0.5 * n)))
+
+# サンプリングされたインデックスは学習データに
+training.x <- x[indices]
+training.y <- y[indices]
+# サンプリングに含まれないものはテストデータにする
+test.x <- x[-indices]
+test.y <- y[-indices]
+
+training.df <- data.frame(x = training.x, y = training.y)
+test.df <- data.frame(x = test.x, y = test.y)
+
+rmse <- function(y, h) {
+  return(sqrt(mean((y -h) ^ 2)))
+}
+
+# 1から12までの次数に対して精度評価
+# データを追加していく用の空のデータフレーム
+# この操作はあまり効率的では無いので、実際には別な方法でやろう
+performance <- data.frame()
+for (d in 1:12) {
+  poly.fit <- lm(y ~ poly(x, degree = d), data = training.df)
+  # 訓練データに対するRMSE
+  performance <- rbind(performance,
+                       data.frame(degree = d, data = "training", 
+                                  rmse = rmse(training.y, predict(poly.fit))))
+  # テストデータに対するRMSE
+  performance <- rbind(performance,
+                       data.frame(degree = d, data = "test",
+                                  rmse = rmse(test.y, predict(poly.fit, newdata = test.df))))
+}
+
+ggplot(performance, aes(x = degree, y = rmse, linetype = data)) +
+  geom_point() + 
+  geom_line() +
+  theme_bw()
+```
+
+中程度の次数のものがテストデータにおいて最もよい性能を出している
+
+次数が低いとモデルの真のパターンをとらえられないため、  
+訓練・テスト両データにおいて予測精度が低くなる(未学習)
+
+次数が高くなるとテストデータでの性能が低下している  
+モデルが複雑かつノイズを拾いすぎているため、訓練データのクセを拾ってしまっている(過学習)
+
+次数が高くなるほど訓練セットとテストセットの性能が離れている  
+過学習は訓練されあt特定の点を超えてデータに一般化できなくなっていること
+
+今回はこのプロットによってどの次数が最も適切かがわかるが、  
+交差検定を使わない場合は未学習や過学習を発見するのが難しい
+
+## 正則化
+交差検定とはアプローチが違うが、交差検定によって過学習していないことを示すことになる  
+また、正則化アルゴリズムの調整は交差検定をつかって行う
+
+### モデルの複雑さの定義
+多項式回帰では次数が大きいほどモデルが複雑  
+ただし、線形回帰一般には当てはめられないため、別な指標が必要
+
+係数が大きいときそのモデルは複雑であると考える  
+lmでフィッティングしたモデルのcoefを合計することで測定できる
+
+* L2ノルム：2乗して合計することで係数の符号が相殺されないようにしたもの
+* L1ノルム：絶対値を取ったものを合計する
+
+```{r}
+lm.fit <- lm(y ~ x)
+# L2ノルム
+l2.model.complexity <- sum(coef(lm.fit) ^ 2)
+l2.model.complexity
+# L1ノルム
+l1.model.complexity <- sum(abs(coef(lm.fit)))
+l1.model.complexity
+```
+
+当てはめの際にモデルが単純になるように強制するのにこの複雑さの指標を使う  
+モデルが訓練データになるべく当てはまるようにするのと、複雑さの折り合いをつけるのに利用される  
+決定基準のの妥協点を探しているため、複雑で当てはまりがよいものより単純で悪いものを選択することになる  
+これによってノイズを拾ってしまうのを防ぐ
+
+### glmnetパッケージ利用して正則化を使った線形モデルを当てはめる
+glmnetを呼ぶと指定した回帰に対して可能な正則化セットを全て返してくれる
+```{r}
+set.seed(1)
+x <- seq(0, 1, 0.01)
+y <- sin(2 * pi * x) + rnorm(length(x), 0, 0.1)
+# glmnetで利用するためにmatrixに変換
+x <- matrix(x)
+
+# glmnet(x, y)ではエラーが出た
+glmnet(poly(x, degree = 10), y)
+```
+リストは一番上がもっと強い正則化で一番したが最も弱い
+
+* DF
+ * モデル中の非ゼロとなった係数の数
+ * 切片は含まない(切片の大きさにはペナルティが課せられない)
+ * 入力のうち実際に重要なのは少数であると断定できる帆が望ましい
+ * 係数がゼロが多くてもモデルの性能がよいほうがいい
+ * ほとんどの係数にゼロが割り当てられるとき、疎(スパース)という
+ * いかにスパースなモデルにするかは重要
+* %Dev
+ * $R^2$
+ * lmは正則化を行わないため、一番下のこの値はlmをそのまま使ったのと同じ結果
+ * 切片まで正則化してしまった場合と全く正則化しない場合が2:lengthに含まれる
+* Lambda
+ * 重要
+ * ハイパーパラメータ
+ * モデルの複雑さ
+ * モデルがどのくらい複雑になってもよいか
+ * モデルの主要なパラメータとなる値をコントロールする
+ * 大きいとモデルが不利になるようにペナルティを与えて全ての係数がゼロになる方向に向かわている
+ * 小さいときはペナルティをあまり与えていない
+ * 極端に弱い正則化に向かうとLambdaが0になり正則化なし回帰となる
+ * 一般にはこの間のどこかに選びうる中で最良のモデルを得られるLambdaがある
+
+### Lambdaの選び方
+交差検定を使う  
+次数の高い値からはじめ訓練セットにたいしていろいろLambdaを使って値を当てはめる  
+ヘルドアウト・テストセット(ヘルドアウト：差し出された)に同様に当てはめて  
+もっともいい性能のものが選ばれる
+
+正則化の結果か必ずヘルドアウト・テストデータに対して行うこと  
+正則化すると訓練データでの性能は悪化するだけなので、そこからは情報は得られない
+
+次数ではなくLambdaの値に対して繰り返しを行う
+```{r}
+glmnet.fit <- with(training.df, glmnet(poly(x, degree = 10), y))
+# Lambdaのみを取り出す
+lambdas <- glmnet.fit$lambda
+performance <- data.frame()
+
+for (lambda in lambdas) {
+  performance <- 
+    rbind(performance,
+          data.frame(lambda = lambda,
+                     rmse = rmse(test.y, 
+                                 # lambdaの値を指定して、glmnetの結果でフィッティング
+                                 predict(glmnet.fit, 
+                                         poly(test.df$x, degree = 10), 
+                                         s = lambda))))
+}
+
+ggplot(performance, aes(lambda, rmse)) +
+  geom_point() +
+  geom_line() +
+  theme_bw()
+```
+Lambdaが0.05付近で最もいい結果を得られている  
+全体のデータに対してフィッテングさせるためにはこの値を選択してモデルを訓練させればよい
+
+```{r}
+# RMSEが最小のLambdaを取得
+best.lambda <- with(performance, lambda[which(rmse == min(rmse))])
+
+glmnet.fit <- glmnet(poly(df$x, degree = 10), df$y)
+# 最もよいlambdaの時の係数を取得
+coef(glmnet.fit, s = best.lambda)
+```
+モデル自体は10個の係数を使う能力があるが、結果的には3つしか使ってない  
+複雑なモデルのときにも単運なモデルを使うのが正則化の根本的な戦略
+
+## テキスト回帰
+正則化が使えるケースとして、連続値の出力を行うテキスト回帰  
+株価の変動を上場申請書類から予測など
+
+テキスト回帰では文書数よりも入力の単語数のほうが遥かに多い  
+N-gramのペアを考慮するなど
+
+データの行数よりも列数が多い場合正則化しないといつも過学習してしまう
+
+予測タスクが達成できないということもあり得る  
+これは、任意の単語に大きい係数を割り当てるモデルによって引き起こされることもある  
+出現する単語のうち共起するものが少ないことを知らずに
+データを当てはめてして一部の単語に係数を割り当てる等  
+この場合結果からはどうして有用なのかの情報はほとんど(あるいは全く)得られない  
+気をつけておくこと
+
+### O'Reillyの売り上げトップ100の相対的な人気
+表裏紙の紹介文だけで推定する
+
+単語ベクトルに変換し各単語がどのくらいの頻度で出現するか  
+理論上は売り上げに貢献する単語のリストが得られるはず
+
+```{r}
+ranks <- read.csv("data/oreilly.csv", stringsAsFactors = F)
+
+documents <- data.frame(Text = ranks$Long.Desc.)
+row.names(documents) <- 1:nrow(documents)
+
+# tmパッケージでDTMに変換する
+corpus <- Corpus(DataframeSource(documents))
+# tm_mapでコーパスの中身に関数を適用する
+corpus <- tm_map(corpus, tolower)
+# stripWhitspaceで連続する空白文字を一つにする
+corpus <- tm_map(corpus, stripWhitespace)
+# removeWordsで英語のstopwordsに含まれるものを削除
+corpus <- tm_map(corpus, removeWords, stopwords("english"))
+
+dtm <- DocumentTermMatrix(corpus)
+
+x <- as.matrix(dtm)
+# revでvectorの反転
+# 人気度の予測が高い時正の値になるようにする
+# 負の係数でも実質的な違いは無いがあまり直感的ではない
+y <- rev(1:100)
+
+set.seed(1)
+
+performance <- data.frame()
+# vectorで指定したいくつかのlambdaの値で回帰
+for (lambda in c(0.1, 0.25, 0.5, 1, 2, 5)) {
+  # 50回データをランダムに分割して訓練・テストデータとして
+  # lambdaの値で回帰を行う
+  for (i in 1:50) {
+    indices <- sample(1:100, 80)
+    training.x <- x[indices, ]
+    training.y <- y[indices]
+    
+    test.x <- x[-indices, ]
+    test.y <- y[-indices]
+    
+    glm.fit <- glmnet(training.x, training.y)
+    predicted.y <- predict(glm.fit, test.x, s = lambda)
+    rmse <- sqrt(mean((predicted.y - test.y) ^ 2))
+    
+    performance <- rbind(performance,
+                         data.frame(lambda = lambda, iteration = i, rmse = rmse))
+  }
+}
+
+ggplot(performance, aes(x = lambda, y = rmse)) +
+  # 各xの値ごとの分散を表示？
+  stat_summary(fun.data = "mean_cl_boot", geom = "errorbar") +
+  # 各xごとの平均を表示？
+  stat_summary(fun.data = "mean_cl_boot", geom = "point") +
+  theme_bw()
+```
+統計的な手法をデータに当てはめようとして失敗した例  
+lambdaを高くすればモデルはよくなっているのは切片のみに縮退しているということ  
+その時点ではデータを全く使っていない  
+今回のテキスト回帰からは手がかりは何も発見できなかったということ  
+すべての観測データはヘルドアウト・データに対してノイズでしか無かった
+
+書籍の紹介文からは売れる方法はわからないということがわかったが、  
+データから手がかりが見つからない可能性もあるということを示す例
+
+## ロジスティック回帰
+順位はうまく予想できないが、50位以内に入るかの分類問題にしてみる
+
+クラスタラベルの追加  
+01符号化で50位以内かのラベルを付加
+```{r}
+# 1と0をそれぞれ50個ずつ作る
+y <- rep(c(1, 0), each = 50)
+```
+
+ロジスティック回帰は2つのカテゴリの1つに所属する確率を予測する回帰の一種  
+確率が0-1なのを利用して0.5を閾値とすることで分類アルゴリズに二使える
+
+ロジスティック回帰は線形回帰と同じ振る舞いをするので閾値を設けるのが唯一の違い
+
+ロジスティック回帰をデータに適用
+```{r}
+# familyで誤差の種類を指定
+# 線形回帰では正規分布に従うと仮定している
+# ロジスティック回帰では二項分布と仮定する
+regularized.fit <- glmnet(x, y, family = "binomial")
+```
+
+glmnetの呼び出し例
+```{r}
+# 線形回帰を行う
+regularized.fit <- glmnet(x, y)
+
+# 正規分布であることを明示的に指定する
+regularized.fit <- glmnet(x, y, family = "gaussian")
+
+# 二項分布を指定してロジスティック回帰にする
+# 誤差分布を切り替えるだけで線形回帰からロジスティック回帰に変えられる
+regularized.fit <- glmnet(x, y , family = "binomial")
+```
+他にも呼び出せるものは多数ある
+
+モデルの予測
+```{r}
+predict(regularized.fit, newx = x, s = 0.001)
+```
+0か1を期待しているが、結果は正負両方の値が生成されている
+
+ifesleで01にしてしまう
+```{r}
+ifelse(predict(regularized.fit, newx = x, s = 0.001) > 0, 1, 0)
+```
+
+bootパッケージを利用して生のデータを足切りして01に変換
+```{r}
+library(boot)
+
+inv.logit(predict(regularized.fit, newx = x, s = 0.001))
+```
+inv.logitがどのような計算をしてるか知りたければソースをみて数学的に理解するのがよい
+
+逆ロジット関数によってへんかいんされ、確率値として出力される　　
+ロジットモデルと呼ばれることが多い
+
+どちらを使うにしても重要なのは線形回帰と同じくらい簡単にできるということ
+
+ロジスティック回帰で予測
+* glmnetの呼び出しで二項分布の誤差分布族を使用
+* 生の予測を01に変換する閾値生成
+* モデルの性能指標としてRMSEではなく誤り率を使用
+
+他にもデータの分割を250回行うことで、lambdaに対する平均誤り率をしっかり求めた  
+偶然の確率以上で予測が本当にできているか確かめるため
+
+ループ回数が増えたので、順番を入れ替えることで毎ループごとにlambdaの各値の割合を毎回  
+計算しなくてよくする効率化のための工夫をした
+```{r}
+set.seed(1)
+
+performance <- data.frame()
+for (i in 1:250) {
+  indices <- sample(1:100, 80)
+  training.x <- x[indices, ]
+  training.y <- y[indices]
+  
+  test.x <- x[-indices, ]
+  test.y <- y[-indices]
+  
+  for (lambda in c(0.0001, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.5, 0.1)) {
+    glm.fit <- glmnet(training.x, training.y, family = "binomial")
+    predicted.y <- ifelse(predict(glm.fit, test.x, s= lambda) > 0, 1, 0)
+    error.rate <- mean(predicted.y != test.y)
+    
+    performance <- rbind(performance,
+                         data.frame(lambda = lambda, iteration = i, error.rate = error.rate))
+  }
+}
+
+ggplot(performance, aes(x = lambda, y = error.rate)) +
+  stat_summary(fun.data = "mean_cl_boot", geom = "errorbar") +
+  stat_summary(fun.data = "mean_cl_boot", gom = "point") +
+  # lambdaの値に偏りがあるため縮尺を調整
+  scale_x_log10() +
+  theme_bw()
+```
+lambdaの値が低いときに偶然よりもいい予想性能を上げている
+
+このデータは順位予測のための高度な手法には十分ではないが、  
+50位以内という単純な二値分類であれば十分な大きさがある
+
+時には問題をシンプルに扱った方がよい
+
+正則化はテストデータにおいてよりよい性能を上げるために単純なモデルを強制する  
+二値分類は順位予測より弱いため、高い性能を達成することができた
