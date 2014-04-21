@@ -1,0 +1,565 @@
+# chapter7
+機械学習アルゴリズムを実装するのに使う手法
+
+## 最適化
+予測因子が1つだけの線形回帰モデルを例にする  
+機械の設定を調整するつまみを使って最適な設定をするような感じ
+
+最適な点を最適値、その値を求めるのを最適化と呼ぶ
+
+身長と体重のデータで線形回帰を実装する  
+```{r}
+# aが切片, bが傾きとしてy = bx + aの直線で予測できるとする
+height.to.weight <- function(height, a, b) {
+  return(a + b * height)
+}
+```
+
+lmの結果の切片aと傾きbを  
+身長と体重の関係を$y = a + bx$の関係で表せるとする
+
+この関数が与えられたときのa, bの値として最適なものをどのように決定するか  
+どのくらい適切かの指標をつくりa, bの値を変化させたときに精度をよくしていくようにする
+
+lmは最適化の対象となる誤差関数があり、  
+線形回帰で使えるアルゴリズムを使って最適値を見つけ出していた
+
+lmで最適なa, bを予測
+```{r}
+heights.weights <- read.csv("data/heights_weights_genders.csv", stringsAsFactors = F)
+
+coef(lm(Weight ~ Height, data = heights.weights))
+```
+lmでは誤差関数として二乗誤差を使っておりそれに基づいてこの値を決定している  
+具体的な求め方は
+1. a, bの値を固定
+2. 身長が与えられたときに体重の値を予測
+3. 体重の真の値から予測値を引くことで誤差を求める
+4. 誤差を二乗する
+5. 二乗誤差を全体で合計する
+
+通常は和ではなく平均値を取ってから平方根を計算
+($\sqrt{\frac{1}{N}\sum_{i=1}^{N} (y_i - \hat{y}_i)^2}$)
+するが、  
+最適化では必要ない操作のため省略することで計算時間を短縮できる
+
+最後の2ステップは密接に関係している  
+誤差のデータに対して合計しないなら二乗する意味はないが、そのまま誤差を合計するとゼロになってしまう
+
+この手法の実装
+```{r}
+squared.error <- function(heights.weights, a, b) {
+  predictions <- height.to.weight(heights.weights$Height, a, b)
+  errors <- heights.weights$Weight - predictions
+  return(sum(errors ^ 2))
+}
+
+# 特定のa, bに対してこの値を評価してみる
+for (a in seq(-1, 1, 1)) {
+  for (b in seq(-1, 1, 1)) {
+    #print(squared.error(heights.weights, a, b))
+    cat(a, b, squared.error(heights.weights, a, b), "\n")
+  }
+}
+```
+a, bをある値にすると他よりもかなり小さくなる場合がある  
+最適値問題はある値の最小値または最大値を求めること
+
+### グリッドサーチ
+a, bの値を十分な範囲の表にして最も低くなるような行を選択する  
+探索したグリッドの範囲での最適値は必ず見つかる
+
+このやり方の問題点として
+* グリッドの値はどのくらい幅で刻めばいいか
+ * aの値を0, 1, 2...とするか0, 0.001,0.002...とするか
+ * 正しい解像度はどのくらいか
+ * 正確に求めるには両方を評価する必要がある
+ * グリッドの最適化という別の問題も増やしてしまう
+* 複数のパラメータがある時かけ算で効いてくる
+ * パラメータが2つでそれぞれ10点を評価するときは100行のエントリ($10^2$)
+ * パラメータ数が増えると指数関数的にエントリが増える(100だと$10^{100}$)
+ * 次元の呪い
+ 
+数百、数千の入力に対して線形回帰を行うにはグリッドサーチは最適なアルゴリズムではない
+
+使えるアルゴリズムは既に用意されている  
+optim関数で最適化アルゴリズムを使う  
+lmと同じ毛かkになることを期待する
+```{r}
+# 第1引数:最適化パラメータの開始点のベクトル
+# 第2引数:最適化したいパラメータを受け取って評価する関数
+# 誤差関数は複数の名前付き引数を渡す方がよいのでここではラップする
+optim(c(0,0), function(x) squared.error(heights.weights, x[1], x[2]))
+```
+a, bの値がそれぞれparで得ら、lmの結果に近いものになっている  
+lmは線形回帰に固有のアルゴリズムを使っているためより正確な値となる  
+optimは線形回帰以外にも使えるので、自分で実装するならこっちを使った方がよい
+
+その他の出力は
+* value:最適値の時の誤差関数の出力
+* count:何回実行されたか
+ * function:最適化したいメイン関数
+ * gradient:勾配(省略可能。勾配を計算する知識があれば与えればよい)
+ * 勾配がよくわからなくても省略すればよいので問題ないが、処理に時間がかかる場合もある
+* covergence
+ * 収束
+ * うまく言ってれば0になる
+ * 層じゃない場合はmessegeにエラーが入っている場合がある
+* message:ユーザが知っておくべきことが起こったか
+
+optim関数は微積分学の高度な知識を使うので詳細には立ち入らない
+
+### optimの概観
+bは0になると決めてaの最適値を見つける
+
+aのみの二乗誤差計算
+```{r}
+a.error <- function(a) {
+  return(squared.error(heights.weights, a, 0))
+}
+```
+
+curve関数を使ってaの関数として　二乗誤差のグラフを書く  
+```{r}
+# curve関数
+#  関数や式をxのような値を用いて評価してプロットする
+#  sapplyを使ってうまく動くようにしないとだめ
+# 第1引数:各xに対するyの値
+# from:x軸の開始位置
+# to:x軸の終了位置
+curve(sapply(x, function(a) {a.error(a)}), from = -1000, to = 1000)
+```
+aの最適な値があってそこからはなれると必ず悪くなるようになっている  
+このような場合はその値が大域最適値であるという
+
+ある点のaの誤差関数を評価したあと、どの方角に進むかを知るには局所的な情報から
+大域的な構造を理解するとoptimは非常に速くたどり着く
+
+回帰問題の全体像をより理解するため、bでも同様の処理を行う
+```{r}
+b.error <- function(b) {
+  return(squared.error(heights.weights, 0, b))
+}
+curve(sapply(x, function(b) {b.error(b)}), from = -1000, to = 1000)
+```
+bにも大域的最適値がある
+
+a, b両方にあるということは、  
+optimは誤差関数を最小化させる単一の最適値を見つけられるはずということが分かる
+
+より一般的には微積分でグラフの谷を全てのパラメータに対して同時に探索する  
+optimは現在考慮している点の隣接点に関する情報を推測するため、  
+グリッドサーチより早く探索できるためどの方向に動けばいいかを決定できる
+
+## リッジ回帰
+正則化を取り入れた回帰  
+通常の最小二乗法との違いは誤差関数  
+リッジ回帰では回帰係数の大きさも誤差項のいちぶとして考慮する
+
+誤差関数以外での変更点はパラメータlambdaが必要なこと  
+二乗誤差の最小化と過学習を防ぐための係数の最小化との調整を行う
+
+lambdaはハイパーパラメータと呼ばれる
+
+誤差関数の定義  
+最小二乗法の誤差関数から各係数の二乗和を取ったものにlambdaを掛けたものをペナルティとして与える  
+どの程度ペナルティを課すかをlambdaで決める
+```{r}
+ridge.error <- function(heights.weights, a, b, lambda) {
+  predictions <- height.to.weight(heights.weights$Height, a, b)
+  error <- heights.weights$Weight - predictions
+  return(sum(error ^ 2) + lambda * (a ^ 2 + b ^ 2))
+}
+```
+適切なlambdaは交差検定で決めることができ、今回はこの値が1であったと仮定する
+
+リッジ誤差関数を使ったoptim
+```{r}
+lambda <- 1
+optim(c(0, 0), function(x) { ridge.error(heights.weights, x[1], x[2], lambda)})
+```
+切片、傾きが小さい値が出力されている  
+この例ではそこまででもないが規模が大きくなるとペナルティを与えることが不可欠になる
+
+curve関数でリッジ回帰の様子を見る
+```{r}
+a.ridge.error <- function(a, lambda) {
+  return(ridge.error(heights.weights, a, 0, lambda))
+}
+curve(sapply(x, function(a) {a.ridge.error(a, lambda)}), from = -1000, to = 1000)
+
+b.ridge.error <- function(b, lambda) {
+  return(ridge.error(heights.weights, 0, b, lambda))
+}
+curve(sapply(x, function(b) {b.ridge.error(b, lambda)}), from = -1000, to = 1000)
+```
+予測誤差の最小化するだけでいかに多くのことができるかがわかる
+
+試しに絶対値誤差でもやってみる
+```{r}
+absolute.error <- function(heights.weights, a, b) {
+  predictions <- height.to.weight(heights.weights$Height, a, b)
+  errors <- heights.weights$Weight - predictions
+  return(sum(abs(errors)))
+}
+
+a.absolute.error <- function(a) {
+  return(absolute.error(heights.weights, a, 0))
+}
+curve(sapply(x, function(a) {a.absolute.error(a)}), from = -1000, to = 1000)
+```
+最小値で連続ではない点があるため、微分によって係数を求めるoptimとは相性が悪い  
+大域的最適値があるにも関わらずそこに到達するとは限らない
+
+強力なアルゴリズムは特定の誤差指標ではうまくいかないことがある  
+optimのような単純なツールでうまくいくのどのような場合で、
+もっと強力なものが必要なのはどのような場合なのかをちゃんと理解しておく必要がある
+
+誤差関数の最適化に対してうまく動くアルゴリズムについて詳しく知りたければ  
+凸計画問題を調べる
+
+## 暗号解読
+回帰の範疇を超えた場合、ほぼ全てのアルゴリズムは予測誤差を最小化する最適化問題と見なせる  
+パラメータが数値だけとは限らないので、ある点における誤差関数の評価するには  
+optimを使う為に必要な近くの点に関する十分な情報が得られない
+
+グリッドサーチを使うこともできるが、より適した方法がある
+今回は直感的かつ強力な手法を利用  
+
+確率的最適化  
+ある範囲の可能なパラメータを少しだけランダムにさせるが、誤差関数が下がる方向に向かわせる
+
+このテのポピュラーな手法は
+* 焼きなまし法
+* 遺伝的アルゴリズム
+* マルコフ連鎖モンテカルロ法(Markov chain Monte Carlo: MCMC)
+
+などと関連する  
+現代のアルゴリズムの多くがもとにしてる手法である、メトロポリス法を使う  
+
+今回の暗号解読システムはあまり効率的ではなく、実用的ではないが  
+メトロポリス法の使い方の例としてはちょうどよい
+
+また、optimのようなほとんどの既存の最適化アルゴリズムではうまく行かない例でもある
+
+### 問題設定
+元と暗号化後で各文字が一対一で対応している換字式暗号  
+有名どころとしては一文字ずらすシーザー暗号や13文字ずらすROT13など
+
+シーザー暗号の実装
+```{r}
+# アルファベットの各文字
+english.letters <- letters
+# 暗号化用list
+caeser.cipher <- list()
+# 復号用list
+invers.ceasar.cipher <- list()
+
+for (index in 1:length(english.letters)) {
+  # 一文字ずらす
+  # z -> aに対応するため、剰余でもとのvectorのインデックスを指定
+  caeser.cipher[[english.letters[index]]] <- english.letters[index %% 26 + 1]
+  # 復号は逆方向
+  invers.ceasar.cipher[[english.letters[index %% 26 + 1]]] <- english.letters[index]
+}
+
+caeser.cipher
+invers.ceasar.cipher
+
+# 文字列を暗号化
+apply.cipher.to.string <- function(string, cipher) {
+  output <- ""
+  for (i in 1:nchar(string)) {
+    output <- paste(output, cipher[[substr(string, i, i)]], sep = "")
+  }
+  
+  return(output)
+}
+
+# vector単位で暗号化
+apply.cipher.to.text <- function(text, cipher) {
+  output <- c()
+  for (string in text) {
+    output <- c(output, apply.cipher.to.string(string, cipher))
+  }
+  
+  return(output)
+}
+
+(chiper.text <- apply.cipher.to.text(c("sample", "text"), caeser.cipher))
+# 復元もしてみる
+apply.cipher.to.text(chiper.text, invers.ceasar.cipher)
+```
+
+### 解読について
+問題の分解
+1. 提案された復号ルールの良さを定義
+2. 現在の最良ルールを無作為に変換するとこによって新しい復号ルールを候補を提案するアルゴリズム定義
+3. 漸次的によりよい復号ルールへ近づけるためのアルゴリズム定義
+
+#### ルールの良さの定義について
+暗号化されたとわかっている文章が与えられたとする  
+与えられた暗号の元のメッセージが英語である前提
+
+人間がみて分かる通常の言葉に変換するのであればsれが良いルール  
+復号されたものが現実的にあり得そうな分なのかをみる
+
+wfoj wjej wjdjに対して2つの復号ルール
+* decrypte(T, A) = xgpk xkfk xkek
+* decrypte(T, B) = veni vidi vici
+
+のとき明らかにAよりBのほうがよい  
+これはBのほうがAより英語のように見えることと、Aのテキストが全く意味が分からないため
+
+プログラム的に判断するには現れるあらゆる単語に対しての確率を与える語彙データベースをつかうとよい  
+そうすることで実際の言語で高い確率を持つ単語であればテキストと等価であり、  
+でたらめな言語は低い確率のテキストとなる
+
+この手法で難しいのは存在しない単語の確率がゼロであるということ  
+非常に小さな値などに置き換える必要がある  
+これ以降、これをイプシロンと呼ぶ
+
+この例外をうまく処理できれば語彙データベースを使って各単語の確率を求めて、  
+それらを掛け合わせることでテキスト全体の確率値を推定できる
+
+確率値が求まれば提案された復号ルールに対する誤差指標を得ることができるので、  
+誤差関数に対する最適化問題として高い確率となるテキスト生成の復号ルールを見つければよい
+
+復号化ルールはグラフに書けず、optimが使えるような滑らかなものでもないため、  
+べつな方法が必要となる
+
+#### メトロポリス法
+任意の復号ルールから初めて、現実的に正しいルールにたどり着くことができるアルゴリズム  
+現実でうまく行くことが多い
+
+復号化ルールが得られたら意味的な妥当性と文法に関する人間の直感で正しく復元できたかを判断できる
+
+良いルールを作るには完全に任意のルールから初めて改善を数多く繰り返していく  
+各ステップは良いルールに向かうので、繰り返すことで最終的に妥当なところに落ち着く
+
+ただし、最終的に必要なステップ数がどのくらいになるかは分からないため、  
+このアルゴリズムでまじめに暗号解読しようとしても現実的ではない  
+現実的な時間の範囲内で解にたどり着く保証はなく、正しい方向に向かっているか確認するのも難しい
+
+今回は最適化アルゴリズムをどのように使えば他の方法では難しい問題を解くことができるかの例
+
+#### 新しい復号化ルールの提案について
+現在のルールをランダムに一カ所だけ変化させる  
+ある一つの入力文字二対する影響を変えることで現在のルールを変化させる
+
+現在のルールが「a」を「b」に変えるのであれば次は「q」に変えるルールを適用する  
+このルール変更によって今まで「c」を「q」に変えて部分も「b」に変更しなければならない
+
+既存のルールの2つの場所を変更するというものになる  
+1つをランダムに決定すればもう1つは自動的に決まる
+
+貪欲法：新しいルールが復号化テキストの確率を増やすのであればそれを採用する方法
+
+貪欲法ではあまり良くないルールに行き詰まる可能性があるため、
+メトロポリス法では下記のようにする
+
+1. 新しいルールが既存よりも確率が高ければ必ず置き換える
+2. 新しいルールのほうが確率が小さければ一定確率で置き換える
+置き換える確率は$新しいルールの確率 / 既存のルールの確率$
+
+2の割合は唐突に出てきているが大事なのは具体的な比ではなく、  
+確率の低いルールが選ばれる確率がゼロではないということ  
+これによって貪欲法で起こるような行き詰まりを避けることができる
+
+メトロポリス法で使う関数の定義
+```{r}
+# 置き換え文字をランダムに決定する
+generate.random.cipher <- function() {
+  cipher <- list()
+  inputs <- english.letters
+  # sample関数でランダムに並べ替え
+  outputs <- english.letters[sample(1:length(english.letters), length(english.letters))]
+  
+  for (index in 1:length(english.letters)) {
+    cipher[[inputs[index]]] <- outputs[index]
+  }
+  
+  return(cipher)
+}
+
+# cipher中のinputをoutputに入れ替える
+#  1. new.cipherにcipherをコピー
+#  2. new.cipherのkeyがinputのもののvalueをoutputで置き換え
+#  3. old.inputにcipher中のkeyがinputのvalueを代入
+#  4. collateral.inputにcipher中のvalueがoutputのkeyを代入
+#  5. new.cipher中のkeyがcollateral.inputのvalueにold.inputを代入
+modify.cipher <- function(cipher, input, output) {
+  # 1
+  new.cipher <- cipher
+  # 2
+  # cipher中のinputの置き換え対象をoutputに変更
+  new.cipher[[input]] <- output
+  # 3
+  # 現行でのinputに対する置き換え文字を取得
+  old.output <- cipher[[input]]
+  # 4
+  # 現行で置き換え先がoutputになっている文字を取得
+  # sapplyでlistの各keyに対するvalueを取得し
+  # その値がoutputになっているもののkeyのみを取得
+  collateral.input <- names(which(sapply(names(cipher), function(key) { cipher[[key]] }) == output))
+  # 5
+  # inputの変更によって置き換え対象となった文字を置き換え
+  new.cipher[[collateral.input]] <- old.output
+  return(new.cipher)
+}
+
+# 置換対象の文字をランダムに選択肢置き換えを行う
+# inputに対する置換をoutputで置き換える
+propose.modified.cipher <- function(cipher) {
+  input <- sample(names(cipher), 1)
+  output <- sample(english.letters, 1)
+  return(modify.cipher(cipher, input, output))
+}
+```
+これによって新たに提案されたルールによって入れ替えられた文字列と  
+現行のルールによって得られた文字列との間の確率を計算できる
+
+$新規/現行$の確率と0-1の乱数の大きい方をとって確率値のほうが大きければ置き換えるようにすれば   
+新規の確率のほうが大きければ確実に1以上となり、  
+そうでない場合は$新規/現行$の確率で置き換えが発生することとなるため、  
+メトロポリス法が実現できる
+
+### 単語の確率の計算
+/usr/share/dict/wordsの各単語がどのくらいの頻度でwikipediaに出現するかを表す語彙データベースを利用
+```{r}
+load("data/lexical_database.Rdata")
+lexical.database[["a"]]
+lexical.database[["the"]]
+lexical.database[["he"]]
+lexical.database[["she"]]
+lexical.database[["data"]]
+```
+
+テキストの確率を計算する為にデータベースから確率を取得する処理のラッパを作成  
+この処理によって未知語の最小値(マシンイプシロン)を割り当てる処理が簡単になる
+```{r}
+one.gram.probability <- function(one.gram, lexical.database = list()) {
+  lexical.probability <- lexical.database[[one.gram]]
+  if (is.null(lexical.probability) || is.na(lexical.probability)) {
+    # double型のマシンイプシロン
+    return(.Machine$double.eps)
+  } else {
+    return(lexical.probability)
+  }
+}
+```
+
+テキストの確率を計算する処理  
+別々の単語に分解して確率を計算してから掛け合わせることで1つに戻す  
+確率値をそのまま使う乗算だと浮動小数点の限界で数値が不安定になるので対数確率を計算する
+```{r}
+log.probability.of.text <- function(text, cipher, lexical.database = list()) {
+  log.probability <- 0.0
+  for (string in text) {
+    decypted.string <- apply.cipher.to.string(string, cipher)
+    log.probability <- log.probability + log(one.gram.probability(decypted.string, lexical.database))
+  }
+  return(log.probability)
+}
+```
+
+### メトロポリス法での計算
+1サイクルの計算
+```{r}
+metropolis.step <- function(text, cipher, lexical.database = list()) {
+  proposed.cipher <- propose.modified.cipher(cipher)
+  
+  # ルール変更前後の確率を計算
+  lp1 <- log.probability.of.text(text, cipher, lexical.database)
+  lp2 <- log.probability.of.text(text, proposed.cipher, lexical.database)
+  
+  if (lp2 > lp1) { # 変更後のルールの方が良ければその確率を返す
+    return(proposed.cipher)
+  } else { # 変更後のほうが低い場合
+    # prob2 / prob1
+    # exp(log(prob)) = prob
+    # log(prob2 / prob1) = log(prob2) - log(prob1)
+    # exp(log(prob2) - log(prob1))
+    a <- exp(lp2 - lp1)
+    x <- runif(1)
+    
+    if (x < a) { # 乱数の方が小さければ新しい確率を返す
+      return(proposed.cipher)
+    } else { # 乱数の方が大きければルールを変更しない
+      return(cipher)
+    }
+  }
+}
+```
+
+全体の動作確認  
+ステップを50000回まわして結果を確認  
+本当の暗号であれば正しく復号できたか確認するすべはないがここではデモのため記録しておく
+```{r}
+# 元のテキスト
+decrypted.text <- c("here", "is", "some", "sample", "text")
+# シーザー暗号で元の文章を暗号化
+encrypted.text <- apply.cipher.to.text(decrypted.text, caeser.cipher)
+
+set.seed(1)
+# ランダムに初期化
+cipher <- generate.random.cipher()
+result <- data.frame()
+
+# ものすごく時間かかる
+number.of.iterations <- 50000
+
+for (iteration in 1:number.of.iterations) {
+  # 現在の確率を取得
+  log.probability <- log.probability.of.text(encrypted.text, cipher, lexical.database)
+  # 現在の復号ルールでの結果を取得
+  current.decrypted.text <- paste(apply.cipher.to.text(encrypted.text, cipher), collapse = " ")
+  # 現在の復号ルールが正解かを保持
+  correct.text <- as.numeric(current.decrypted.text == paste(decrypted.text, collapse = " "))
+  # 結果をdata frameに格納
+  result <- rbind(result, data.frame(iteration = iteration,
+                                     log.probability = log.probability,
+                                     current.decrypted.text = current.decrypted.text,
+                                     correct.text = correct.text))
+  # 次のステップにまわす
+  cipher <- metropolis.step(encrypted.text, cipher, lexical.database)
+}
+
+
+write.table(result, file = "data/results.csv", row.names = F, sep = "\t")
+result[c(1, 5000, 10000, 15000, 20000, 25000, 30000, 35000, 40000, 45000, 50000), ]
+```
+
+45000ステップではまだ正しい暗号には到達していない  
+45609ステップで正しい暗号に到達するが、そのルールを通り越して他のルールにうつっている
+
+ここで用いた目的関数の問題点  
+復号化されたものが英文かではなく各単語がすべて英単語か調べているだけなので、  
+あり得そうな単語が出てくれば文法的におかしかったり、意味的な整合性がなかったりしてもそちらに
+うつってしまう傾向がある
+
+2単語連続の確率など英語に関する情報をさらに使うことでこの問題を回避することができる  
+自分がほしい解とルールがベストだと判定した解は異なることがある
+
+最適化を用いて解を解く際は人間のプロセスを組み込む必要がある
+
+### メトロポリス法の問題点
+* ランダム性を伴う最適化なので到達までにかかる時間は初期シードに依存する
+* 良い復号化ルールに達してもそこからさらにうつってしまう可能性がある
+ * このおかげで貪欲でないが欲しかった解を見捨ててしまうこともある
+
+ステップごとの確率値の変動  
+ここからも動きがいかに不規則かが分かる
+```{r}
+library(ggplot2)
+ggplot(result, aes(x = iteration, y = log.probability)) + 
+  geom_line() +
+  theme_bw()
+```
+
+ランダムな動きへの対処として時間経過ごとに貪欲でないルールを採用する回数を減らしていく  
+焼きなまし法がある  
+新しい復号化ルールを採用する際の方法を変えるだけで実験することができる
+
+ランダムさを利用して解の分布として求めるという方法もある    
+これは暗号解読ではあまり役に立たないが、正解が数値で表される場合は正解候補を複数出せるので役立つ

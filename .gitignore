@@ -12,3 +12,4 @@ figure/*
 data/*
 
 !README.md
+!data/.gitkeep
