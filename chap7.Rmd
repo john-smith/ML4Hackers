@@ -504,7 +504,7 @@ encrypted.text <- apply.cipher.to.text(decrypted.text, caeser.cipher)
 set.seed(1)
 # ランダムに初期化
 cipher <- generate.random.cipher()
-result <- data.frame()
+results <- data.frame()
 
 # ものすごく時間かかる
 number.of.iterations <- 50000
@@ -517,7 +517,7 @@ for (iteration in 1:number.of.iterations) {
   # 現在の復号ルールが正解かを保持
   correct.text <- as.numeric(current.decrypted.text == paste(decrypted.text, collapse = " "))
   # 結果をdata frameに格納
-  result <- rbind(result, data.frame(iteration = iteration,
+  results <- rbind(results, data.frame(iteration = iteration,
                                      log.probability = log.probability,
                                      current.decrypted.text = current.decrypted.text,
                                      correct.text = correct.text))
@@ -527,7 +527,7 @@ for (iteration in 1:number.of.iterations) {
 
 
 write.table(result, file = "data/results.csv", row.names = F, sep = "\t")
-result[c(1, 5000, 10000, 15000, 20000, 25000, 30000, 35000, 40000, 45000, 50000), ]
+results[c(1, 5000, 10000, 15000, 20000, 25000, 30000, 35000, 40000, 45000, 45609, 50000), ]
 ```
 
 45000ステップではまだ正しい暗号には到達していない  
@@ -552,7 +552,7 @@ result[c(1, 5000, 10000, 15000, 20000, 25000, 30000, 35000, 40000, 45000, 50000)
 ここからも動きがいかに不規則かが分かる
 ```{r}
 library(ggplot2)
-ggplot(result, aes(x = iteration, y = log.probability)) + 
+ggplot(results, aes(x = iteration, y = log.probability)) + 
   geom_line() +
   theme_bw()
 ```

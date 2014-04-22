@@ -1,0 +1,164 @@
+# chapter8
+正しい答えの与えられた訓練データから学習するのは教師あり学習  
+データにおける構造を見つけるにあたって本当のパターンをうまく見つけられたかという信号を使っている
+
+うまくいってるかどうかの答えを使わずに答えを見つけるのが教師なし学習  
+大量に列のあるテーブルをより少ない列に次元縮退させるなど
+
+列数があまりにも多すぎると次元縮退によってデータセットが理解しやすくなる  
+多くの列を単一の行で置き換えてしまうと情報は失われてしまうが、  
+理解しやすさのメリットは新しいデータセットを調べるときには重要
+
+## 主成分分析(PCA)
+株式データでは実際には25列あり、全体を理解するには列が多すぎる  
+全体を要約した列を一つだけ作りたい場合には主成分分析(principal components analysis:PCA)が使える
+
+PCAでは生のデータをの情報をどれだけ含んでいるかに基づいて新たに元データと同じ数だけ列を作る  
+新しいデータの最初の列は第一主成分(または主成分)とよばれ、  
+データセット全体構造の大部分を含んだ情報となることが多い
+
+PCAはデータセットの列の間に強い相関があるほど有効  
+相関のある列同士を説明するための隠れたパターンを含んだ単一の列に置き換えるため
+
+PCAの動作をみるためにデータを読み込む
+```{r}
+prices <- read.csv("data/stock_prices.csv")
+prices[1, ]
+
+# lubridateパッケージのymd関数を使って日付を変換
+# POSIXct型に変換される
+library("lubridate")
+prices <- transform(prices, Date = ymd(Date))
+
+# reshapeパッケージのcast関数を使って
+# 行:Date, 列:Stock, 値:Closeに変換
+library("reshape")
+date.stock.matrix <- cast(prices, Date ~ Stock, value = "Close")
+
+# データの一部が欠損している不完全な項目を削除
+prices <- subset(prices, Date != ymd("2002-02-01"))
+prices <- subset(prices, Stock != "DDR")
+# 再度castしなおす
+date.stock.matrix <- cast(prices, Date ~ Stock, value = "Close")
+
+head(date.stock.matrix)
+```
+
+行列の全ての数値列間での相関を求めることで、
+* 相関の平均
+* 低い相関が起こる頻度
+
+の感覚をつかむ
+```{r}
+# 日付情報である最初の列以外の相関行列
+cor.matrix <- cor(date.stock.matrix[, 2:ncol(date.stock.matrix)])
+# plotのためvectorに変換
+correlations <- as.numeric(cor.matrix)
+
+library("ggplot2")
+ggplot(data.frame(correlations = correlations), aes(x = correlations, fill = 1)) +
+  geom_density() +
+  theme_bw() +
+  theme(legend.position = "none")
+```
+大部分の相関は正の値になっているため、PCAがうまく行きそうな例
+
+princompを使ってPCAを実行
+```{r}
+pca <- princomp(date.stock.matrix[, 2:ncol(date.stock.matrix)])
+pca
+```
+データセットの分散のうちどれくらいがそれぞれの主成分で説明できているかの標準偏差  
+第一主成分が分散の29%、第二主成分が20%...となる
+
+loadings(負荷)をみることで第一主成分を詳しくみることができる  
+各成分が各列にどのくらい重みを持つかを表している
+
+loadingsはprincompのloadings要素から取得できる  
+各列が各要素にどの程度含まれているか、要素数x要素数の行列で得られる
+
+第一主成分の負荷を取得
+```{r}
+# loadingsの第1列を指定して第一主成分の値のみを取得
+principal.component <- pca$loadings[, 1]
+# 数値に変換することで値のみを取得
+loadings <- as.numeric(principal.component)
+
+ggplot(data.frame(loading = loadings), aes(x = loading, fill = 1)) +
+  geom_density() +
+  theme_bw() +
+  theme(legend.position = "none")
+```
+ほとんどが負の値であり、疑わしい点があるが、これ自体は簡単に直せるもの
+
+predictを利用して第一主成分からデータセットを1行で要約
+```{r}
+# 各値における各成分の方向での値をpredictで予測
+# 第1列を指定する個tで第一主成分のもののみを取得している
+market.index <- predict(pca)[, 1]
+
+# ダウ平均株価(Dow Jones Index)を指標として結果が良いかを判断する
+# 株価市場の指標はこれ以外にも複数ある
+dji.prices <- read.csv("data/DJI.csv")
+# 日付を変換
+dji.prices <- transform(dji.prices, Date = ymd(Date))
+
+# 今回の対象となる期間のみを取り出す
+dji.prices <- subset(dji.prices, Date > ymd("2001-12-31"))
+dji.prices <- subset(dji.prices, Date != ymd("2002-02-01"))
+
+# 今回必要な日ごとの終値のみを取得する
+# 元のデータセットと並び順をあわせるため、逆順に変換
+dji <- rev(dji.prices$Close)
+dates <- rev(dji.prices$Date)
+
+# 日付ごとにDJIと第一主成分を結合
+comparison <- data.frame(Date = dates, MarketIndex = market.index, DJI = dji)
+# 相関をプロット
+ggplot(comparison, aes(x = MarketIndex, y = DJI)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = F) + 
+  theme_bw()
+
+# 負の相関となってしまっているため、第一主成分の符号を反転
+comparison <- transform(comparison, MarketIndex = -1 * MarketIndex)
+ggplot(comparison, aes(x = MarketIndex, y = DJI)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = F) + 
+  theme_bw()
+```
+主成分分析による自作の指標とDJIはよく当てはまっている
+
+時間軸上でみたときの指標の比較
+```{r}
+# id.varsで指定した列の値ごとに対応するもう一方の列名をvariable, 値をvalueとして出力
+# id.varsはvectorで複数指定できるが、variable, valueは一つの列にしぼれてないとダメ
+alt.comparison <- melt(comparison, id.vars = "Date")
+head(comparison)
+head(alt.comparison)
+
+names(alt.comparison) <- c("Date", "Index", "Price")
+# Indexの値ごとにグループ分けしてプロット
+ggplot(alt.comparison, aes(x = Date, y = Price, group = Index, color = Index)) +
+  geom_point() +
+  geom_line() +
+  theme_bw()
+
+# 尺度が違いすぎてよくわからないためscale関数で調整
+comparison <- transform(comparison, MarketIndex = -scale(MarketIndex), DJI = scale(DJI))
+alt.comparison <- melt(comparison, id.vars = "Date")
+names(alt.comparison) <- c("Date", "Index", "Price")
+p <- ggplot(alt.comparison, aes(x = Date, y = Price, group = Index, color = Index))
+p <- p + geom_point()
+p <- p + geom_line()
+p <- p + theme_bw()
+print(p)
+```
+PCAを使った指標とDJIとよく似ている  
+PCAのみをつかった指標で株式全体のパフォーマンスを表現できるように設計された指標と似たものが作れる
+
+PCAはそれ自体で何かを予測しようとしているわけではない時でも、  
+データセットを単純化して構造を発見するのに役立てることができる
+
+関連項目としてPCAがうまく行かない環境でも代替として使うことができる、
+独立成分分析(ICA)がある
