@@ -23,6 +23,9 @@
   * easyham2 -> mail/easyham_test
   * hardham -> mail/hardham_train
   * hardham -> mail/hardham_test
+* 米国議員の点呼投票
+ * ftp://voteview.com/junkord/SC01112D21_PRE_DATES.DTA
+ * 第101-111議会を抜き出す必要あり
 
 データはすべてdataディレクトリにダウンロードする前提となっている
 

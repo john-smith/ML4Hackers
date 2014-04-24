@@ -1,0 +1,266 @@
+# chapter9
+## 類似度によるクラスタリング
+あるグループのメンバー同士の類似度を知りたい  
+ブランドマーケティングのアンケート調査の結果と個人に関する情報から、  
+社会経済的変数におけるブランドの支持度を知るなど
+
+重要なのはブランドが広い顧客層の支持を得ているか  
+ブランドの大部分の特徴を好むひとが社会経済的特性を持っているか
+
+調査回答者がどのようにクラスタリングされるか可視化するのがよい  
+異なる社会経済的カテゴリの構成要因として、性別・人種・経済的階層など  
+どの部分が大きく交わっているかを知る
+
+この知識を利用すればブランドの支持度に基づいてグループがクラスタリングされている範囲や、  
+別のグループとの人数比、グループ間の距離もわかる  
+そこから社会経済的カテゴリのターゲットとするブランドの特徴がわかる
+
+「近い」「遠い」は距離に固有の概念  
+可視化には集合度を表す空間的概念が必要となる
+
+距離の分析するデータの種類に応じた距離の尺度を定義するため、  
+類似度と相違度を表す  
+絶対値による距離をとる単純な方法
+
+距離を求めるだけでは十分でないのでクラスタリングのため、  
+多次元尺度構成法(multidimensional scaling: MDS)を利用して  
+全ての点の距離の尺度を利用してデータを可視化する
+
+### 距離尺度
+6つの製品を4人が評価した例  
+各製品を良い・悪いで評価するが、意見がない場合はスキップできる
+
+4x6行列として良い(1)、悪い(-1)、スキップ(0)のダミー変数で数値化し、乱数で模擬評価を生成
+```{r}
+set.seed(851982)
+# sample関数で-1, 0, 1のいずれかをランダムに生成
+# 各値が評価値とする
+ex.matrix <- matrix(sample(-1:1, 24, rep = T), nrow = 4, ncol = 6)
+# 顧客名をA-Dとする
+row.names(ex.matrix) <- c("A", "B", "C", "D")
+# 製品名1-6
+colnames(ex.matrix) <- paste("P", 1:6, sep = "")
+ex.matrix
+
+# ユーザごとの関連を計算
+# 非対角成分は両方評価された製品の全体的な評価値の要約
+# 対角成分はユーザごとの評価した商品数
+ex.mult <- ex.matrix %*% t(ex.matrix)
+ex.mult
+```
+AとDは両方製品4を悪いと評価しており、Dは製品1と3を好んでるがAは評価してないので、  
+AとDは類似している関係として1つの一致があった
+
+重なる部分に関して言えることだけなので、限定的な用途となる
+
+多次元空間でのユークリッド距離を使う  
+空間上での2点間の最短経路を結ぶことで測定できる
+
+全体的な類似度・相違度に基づいて全ての顧客のユークリッド距離を計算  
+顧客ごとのベクトルの差の二乗和のルートで計算
+```{r}
+# AとDのユークリッド距離を計算
+sqrt(sum((ex.mult[1,] - ex.mult[4,]) ^ 2))
+
+# dist関数で全ての組み合わせを求める
+# 距離計算方法は他にも指定できる(デフォルトはユークリッド距離)
+ex.dist <- dist(ex.mult)
+# 対象行列なので下三角のみ出力される
+# dist呼び出し時にupper = TRUEで上も表示できる
+ex.dist
+```
+
+### 多次元尺度構成法
+距離に基づいて空間を可視化するために使う手法  
+データセットないの点の全てのペア間の距離を示す距離行列を使って座標を近似
+
+2次元の場合、お互いの距離が全て1の4点などそのまま図示できない場合があるので、近似したものとなる
+
+MDSは距離行列の特定の近似値を使うので最適化アルゴリズムの例にもなる  
+近似アルゴリズムは次元を問わず利用できるが可視化が目的であれば2次元でよい  
+これは最も一般的なMDSの使い方であるが、高次にスケールさせるのも有効  
+3次元ではまた別なクラスタリングが明らかになるなど
+
+cmdscale関数で実行
+```{r}
+# 距離行列を渡す
+# 引数kで次元数を指定可能
+ex.mds <- cmdscale(ex.dist)
+plot(ex.mds, type = "n")
+text(ex.mds, c("A", "B", "C", "D"))
+grid()
+```
+AとDはクラスタリングされているが、BとCはクラスタリングされていない  
+これらがどのようにクラスタリングされるか知るためにはさらに多くの情報が必要
+
+距離そのものの解釈については実質何も言えない  
+AとDは類似してることはわかるが、その類似の度合いやBとCとの相違の度合いについては解釈できない  
+MDSで算出する距離はアルゴリズムによって作り出された人工的なもの
+
+## 米国上院議員の可視化
+米国議員がかつてないほど分極化しているのかをMDSを使って  
+党路線における上院議員のクラスタリングで可視化し2党のメンバーの交わりを調査
+
+### 上院議員の距離尺度
+国会議員の点呼投票データを利用  
+賛成(承認)、反対(否認)で判定
+第101-111議会のものを利用する
+
+#### データの読み込み
+データはstata用のファイルになっているため、foreignパッケージを利用  
+S, SAS, SPSS, Systat, dBaseなど多くの外部データをdata frameで読み込める
+```{r}
+library(foreign)
+library(ggplot2)
+
+data.dir <- "data/roll_call/"
+data.files <- list.files(data.dir)
+
+# 全ファイルを一括で読み込み
+rollcall.data <- lapply(data.files, 
+                        function(f) {
+                          # ファイル読み込み
+                          # convert.factors = FALSEで文字列をfactorにしない
+                          read.dta(paste(data.dir, f, sep = ""), convert.factors = F)
+                          })
+# 第101議会野データが103行647列
+dim(rollcall.data[[1]])
+# 各行が議員の投票者に相当
+# 最初の9列は投票者識別情報
+# 識別情報の各列の意味はコードブック(http://www.voteview.com/senate101.htm)に記載されている
+head(rollcall.data[[1]])
+```
+
+今回は投票者の名前、所属政党、実際の投票だけを利用  
+点呼投票は賛成・反対のみではなく公表済み、ペアでの賛成・反対、 
+出席投票(出席したけど投票してない)、出席してない、選出されていなかったなどがある
+
+投票の仕組みではなく結果に関心があるので、賛成と反対の全種類をまとめる  
+また、非投票の全種類もまとめる
+```{r}
+# 距離計算に必要なデータだけを抜き出して
+# 計算が可能な議員x投票の行列の形式で取得する
+rollcall.simplified <- function(df) {
+  # 99は副大統領
+  # 副大統領が投票することは稀なので除いて追う
+  no.pres <- subset(df, state < 99)
+  for (i in 10:ncol(no.pres)) {
+    # 7:出席var1, 8:出席var2, 9:非投票, 10:非メンバーは非投票として0とする
+    no.pres[, i] <- ifelse(no.pres[, i] > 6, 0, no.pres[, i])
+    # 1:賛成, 2:ペア賛成, 3:公表賛成は賛成に統一して1とする
+    no.pres[, i] <- ifelse(no.pres[, i] > 0 & no.pres[, i] < 4, 1, no.pres[, i])
+    # 4:公表反対, 5:ペア反対, 6:反対は反対に統一して-1とする
+    no.pres[, i] <- ifelse(no.pres[, i] > 3, -1, no.pres[, i])
+  }
+  # 投票結果だけを抜き出して行列にする
+  return(as.matrix(no.pres[, 10:ncol(no.pres)]))
+}
+rollcall.simple <- lapply(rollcall.data, rollcall.simplified)
+```
+
+#### MDSでクラスタリング
+議会ごとに距離を計算してMDSでクラスタリングする
+```{r}
+# lapplyで議会ごとに距離を計算する
+rollcall.dist <- lapply(rollcall.simple, function(m) { dist(m %*% t(m)) })
+# MDSを実行
+# k = 2を可読性のために明示的に次元を設定
+rollcall.mds <- lapply(rollcall.dist, 
+                       function(d) {
+                         # 符号を反転させて民主党が左側、共和党が右側に配置されるようにする
+                         # 米国ではイデオロギー的にそうするため
+                         # ただし、実際にどのように配置されるかはやってみないと分からない
+                         # 分析を適切に行うには結果の表現や手法の改善を柔軟かつ批判的に検討すること
+                         as.data.frame(cmdscale(d, k = 2) * -1)
+                       })
+
+# for分で第101-111議会全てのデータに対して処理を行う
+congresses <- 101:111
+for (i in 1:length(rollcall.mds)) {
+  # data frameの座標軸名を設定
+  names(rollcall.mds[[i]]) <- c("x", "y")
+  # 元データから副大統領を除いたものを取得
+  congress <- subset(rollcall.data[[i]], state < 99)
+  # データを統一するため、姓名両方入っている議員は姓のみを取り出す
+  congress.names <- sapply(as.character(congress$name), 
+                           function(n) { strsplit(n, "[, ]")[[1]][1] })
+  # mdsの座標、議員名、所属政党、議会番号でdata frameを作成
+  rollcall.mds[[i]] <- transform(rollcall.mds[[i]], 
+                                names = congress.names,
+                                party = as.factor(congress$party),
+                                congress = congresses[i])
+}
+head(rollcall.mds[[1]])
+
+# 議会ごとに表示
+for (i in 1:length(rollcall.mds)) {
+  cong <- rollcall.mds[[i]]
+  # 共通フォーマットを定義
+  base <- ggplot(cong, aes(x, y)) +
+    # スケールの設定
+    scale_size(range = c(2, 2), guide = "none") +
+    # アルファの設定
+    scale_alpha(guide = "none") +
+    theme_bw() +
+    # 表示の方法は別途指定するためブランクにする
+    theme(axis.ticks = element_blank(), axis.text.x = element_blank(), 
+          axis.text.y = element_blank(), panel.grid.major = element_blank()) +
+    ggtitle(paste("Roll Call Vote MDS Clustering for", cong$congress, "th U.S. Senate")) +
+    xlab("") + ylab("") +
+    # 党ごとの点の形設定
+    # 100:民主党, 200:共和党, 328:無所属
+    scale_shape(name = "Party", breaks = c("100", "200", "328"), 
+                labels = c("Dem.", "Rep", "Ind."), solid = F)
+
+  # 複数のグラフを作成する
+  # 党ごとに点でプロット
+  print(base + geom_point(aes(shape = party, alpha = 0.75), size = 2))
+  # 党ごとに色分けし、議員名でプロット
+  print(base + geom_text(aes(color = party, alpha = 0.75, label = cong$names, size = 2)))
+}
+```
+
+一つ目のプロットで政党の異なる上院議員が交わるかに対しての答えをだする  
+これは「いいえ」である  
+民主党と共和党の間には大きな隔たりがある
+
+左右の極端な一にいる議員は多くの場合外れ値であることも分かる  
+大きな立法論争の中心人物となった穏健派の共和党議員がいる
+
+オバマ(左下)とマケインが(中央より)は大統領選挙活動のために投票記録が少なく、
+相補的な分けではない  
+同じ投票を欠席した可能性が高く、同じ法案に投票したときの極端には違わないものの  
+比較的ことなる傾向がある
+
+#### 年代順の全議会の可視化
+時間経過に伴う政党ごとの全体的な交わりに関して何らかの示唆を示す  
+現在の上院議員がかつ寝てないほど分極化しているかを確認する
+```{r}
+# 全データを結合
+all.mds <- do.call(rbind, rollcall.mds)
+ggplot(all.mds, aes(x, y)) +
+  geom_point(aes(shape = party, alpha = 0.75), size = 2) +
+  scale_size(range = c(2, 2), guide = "none") +
+  scale_alpha(guide = "none") +
+  theme_bw() +
+  theme(axis.ticks = element_blank(), axis.text.x = element_blank(), 
+        axis.text.y = element_blank(), panel.grid.major = element_blank()) +
+  xlab("") + ylab("") +
+  scale_shape(name = "Party", breaks = c("100", "200", "328"), 
+                labels = c("Dem.", "Rep", "Ind."), solid = F) +
+  # 議会ごとに分割表示
+  facet_wrap(~congress)
+```
+どの年代に例外は少なく、もそれほど差は見られない
+第101議会と第102議会は近づいているように見えるが軸の目盛による人為的な結果  
+MDSは全ての観測点間の距離尺度に基づいて評価関数を最小化するため
+
+観測点すうなどの多くの理由よってこういった差が出てくるが、  
+全てのパネルで目盛を統一する必要があるため、狭まったり広がったりして見えてしまう
+
+このデータから、点呼投票でのクラスタリングでは政党の交わりが非常に少ないことが分かる  
+政党内での差異は多少はあるかもしれないが、政党間の差異は非常に少ない
+
+他にもデータを追加したら面白いかもしれない情報はたくさんある  
+例えば地理的に同じ地域の上院議員は一緒にクラスタリングされるか  
+同じ委員会の会員はクラスタリングにつながるかなど
