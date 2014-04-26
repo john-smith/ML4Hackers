@@ -1,0 +1,209 @@
+# chapter10
+類似度を使ってユーザにアイテムを推薦する  
+
+## k近傍法
+kNN(k近傍法)を使う  
+機械学習のアルゴリズムの中でも最も直感的なもの  
+ほとんどの人が知らず知らずのうちに使うだろう手法
+
+ユーザが好きな曲に最もよく似たもののうち、  
+まだリストに含まれていないものを推薦する差異等に利用される  
+これは実質k = 1の時のkNNと同一になっている
+
+kNNはこの直感を一般化したもの
+
+人が友達にオススメをお願いするのと同じような方法で推薦する
+* 好みが似てる人を探し、推薦するように依頼
+* 多くの人が同じものを推薦したらそれは気に入るだろうと推測
+
+### 2カテゴリの分類
+まずは簡単な設定でやってみる
+
+Rではglm関数でロジスティック回帰ができる  
+これによって決定境界を引いてカテゴリ分けすることができる  
+ただし、複雑な構造になると線形での決定境界では解決できない
+
+このような場合、カーネルトリックのような手法で解決することも考えられるが、  
+分類すべき点の回りに円を書いてその中のデータポイントに基づいて分類する手法がある
+
+これは使える手法だが、欠点もある  
+円の半径を選んで局所的なデータポイントを定義しなければならない  
+すべてのデータポイントが同じ距離くらいであれ問題ないが、  
+近くにたくさん点があり、別な場所では孤立しているなどがある  
+と全ての点について近い点を定義するには大きい円を選ぶ必要があるが、  
+決定境界が広すぎてしまう点も発生する
+
+これに対処するために、円ではなく入力に近いk個の点を使う  
+これらの点はk近傍と呼ばれる  
+近傍が求まればあとは多数決でクラスタを予測できる
+
+実装
+```{r}
+# データの読み込み
+df <- read.csv("data/example_data.csv")
+head(df)
+
+# ユークリッド距離での距離行列を求める関数を作成
+distance.matrix <- function(df) {
+  # 点の数x点の数で点同士の距離を格納した行列の準備
+  distance <- matrix(rep(NA, nrow(df) ^ 2), nrow = nrow(df))
+  for (i in 1:nrow(df)) {
+    for (j in 1:nrow(df)) {
+      # 全てのデータに対して2点間の距離を計算
+      distance[i, j] <- sqrt((df[i, "X"] - df[j, "X"]) ^ 2 + (df[i, "Y"] = df[j, "Y"]) ^ 2)
+    }
+  }
+  return(distance)
+}
+
+# k近傍を返す関数を作成
+# インデックスの値を返す
+k.nearest.neighbors <- function(i , distance, k = 5) {
+  # 近い順にソートして距離ゼロの自分自身を除いたk個を取得
+  return(order(distance[i, ])[2:(k + 1)])
+}
+
+# データフレーム中の各点に対するk近傍を取得
+# Labelという列にクラスタラベルを格納していると仮定しているので汎用的ではない
+knn <- function(df, k = 5) {
+  distance <- distance.matrix(df)
+  predictions <- rep(NA, nrow(df))
+  for (i in 1:nrow(df)) {
+    indices <- k.nearest.neighbors(i, distance, k = k)
+    # 各近傍の値を取得してその平均値が0.5を閾値として予測を入れる
+    predictions[i] <- ifelse(mean(df[indices, "Label"]) > 0.5, 1, 0)
+  }
+  return(predictions)
+}
+
+# 予測を実行
+df <- transform(df, kNNPredictions = knn(df))
+# 正解と予測が違うものの個数を取得
+sum(df$Label != df$kNNPredictions)
+# 全体数を取得
+nrow(df)
+```
+100個中7個が失敗してるので、精度は93%  
+単純なアルゴリズムにしては悪くない
+
+### パッケージを使って実データに適用
+```{r}
+# 変数名がかぶるので削除
+rm("knn")
+library(class)
+
+df <- read.csv("data/example_data.csv")
+n <- nrow(df)
+
+set.seed(1)
+# 全データの半分をランダムサンプリング
+indices <- sort(sample(1:n, n * (1 / 2)))
+# 説明変数として座標のみを取得
+training.x <- df[indices, 1:2]
+test.x <- df[-indices, 1:2]
+# 目的変数としてラベルを取得
+training.y <- df[indices, 3]
+test.y <- df[-indices, 3]
+
+# kNN(k = 5)でラベルを予測
+predicted.y <- knn(training.x, test.x, training.y, k = 5)
+
+# 結果を確認
+sum(predicted.y != test.y)
+length(test.y)
+# 精度
+1 - (sum(predicted.y != test.y) / length(test.y))
+
+# ロジスティック回帰と比較
+# トレーニングデータで学習
+logit.model <- glm(Label ~ X + Y, data = df[indices, ])
+# ゼロより大きいものを正例として予測
+predictions <- as.numeric(predict(logit.model, newdata = df[-indices, ]) > 0)
+# 精度を求める
+sum(predictions != test.y)
+1 - (sum(predictions != test.y) / length(test.y))
+```
+ロジスティック回帰のほうが精度が低い  
+線形分離できない場合はkNNのほうがいい結果が出る
+
+### レコメンド
+* アイテムベース
+ * ユーザが好むアイテムに似たアイテムを推薦
+* ユーザベース
+ * ユーザに似たユーザが好むアイテムを推薦
+
+アイテムよりユーザが多ければアイテムベースの方が計算コストが低い  
+逆もまた
+
+### パッケージのレコメンンド
+KaggleのRパッケージ推薦を行う  
+50人のRプログラマによるパッケージインストール記録から推薦  
+
+コンテストや製品レベルの水準ではkNNだけでなく、行列分解の手法をつかっている  
+多くの分類器を組み合わせるはアンサンブル学習
+
+ユーザがパッケージをインストールするかを予測する
+新しいパッケージに対する予測として似ているパッケージを実際にインストールされたかを確認ればよい
+
+#### データの読み込み  
+今回の手法で扱いやすいようにデータを変換してある
+```{r warning=FALSE}
+installations <- read.csv("data/installations.csv")
+# パケージ名、ユーザ、インストールしたか
+head(installations)
+
+library(reshape)
+# テーブルの形式に変換
+user.package.matrix <- cast(installations, User ~ Package, value = "Installed")
+user.package.matrix[1:6, 1:6]
+# 計算には必要ないユーザIDを行名にしてデータから除く
+row.names(user.package.matrix) <- user.package.matrix[, 1]
+user.package.matrix <- user.package.matrix[, -1]
+# 相関係数を類似度とする
+similarities <- cor(user.package.matrix)
+dim(similarities)
+# 同じパッケージの類似度は1
+similarities[1, 1]
+similarities[1, 2]
+
+# 距離にしたいので-1は無限大、1は0に変換
+# 2で割って-0.5~0.5に変換後0.5を足すことで0~1にしてlogを取ることで無限大~1にしてる
+distances <- -log((similarities / 2) + 0.5)
+```
+
+#### kNNを求める
+似たパッケージをどれだけインストールしてるかの数で確率を推定
+```{r}
+k.nearest.neighbors <- function(i , distances, k = 25) {
+  return(order(distances[i,])[2:(k + 1)])
+}
+
+# ユーザが似たパッケージをどれだけインストールしてるかを返す
+installation.probability <- function(user, package, user.package.matrix, distances, k = 25) {
+  # packageに近いものをkNNで取得
+  neighbors <- k.nearest.neighbors(package, distance, k = k)
+  # 似たパッケージインストール数でユーザに対するインストールの確率値を計算
+  return(mean(sapply(neighbors, 
+                     function(neighbor) {
+                       user.package.matrix[user, neighbor]
+                     })))
+}
+# ユーザ1のパッケージ1インストール確率を計算
+installation.probability(1, 1, user.package.matrix, distances)
+
+# 全てのパッケージをインストール確率が高い順でソート
+most.probable.packages <- function(user, user.package.matrix, distances, k = 25) {
+  return(order(sapply(1:ncol(user.package.matrix),
+                      function (package) {
+                        installation.probability(user, package, user.package.matrix, distance, k)
+                      }),
+               decreasing = T))
+}
+
+# ユーザ1に対するインストール確率が高い上位10件のパッケージ名
+user <- 1
+listing <- most.probable.packages(user, user.package.matrix, distances)
+colnames(user.package.matrix[listing[1:10]])
+```
+
+この手法のいい点はユーザに予測の理由を説明しやすい点
