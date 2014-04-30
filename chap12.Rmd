@@ -1,0 +1,372 @@
+# chapter12
+非線形な決定境界を使うためのカーネルトリック
+
+## SVM
+### 扱うデータ  
+```{r}
+library(ggplot2)
+df <- read.csv("data/df.csv")
+ggplot(df, aes(x = X, y = Y, color = factor(Label))) + 
+  geom_point() +
+  theme_bw()
+```
+
+### ロジスティック回帰してみる
+```{r}
+logit.fit <- glm(Label ~ X + Y, family = binomial(link = "logit"), data = df)
+logit.predictions <- ifelse(predict(logit.fit) > 0, 1, 0)
+mean(logit.predictions == df$Label)
+# 正解率は52%程度
+# 全てがクラス0としたときと同じ結果に精度になっている
+mean(0 == df$Label)
+```
+クラス0が左右に散らばっているため、ロジスティック回帰のようなアルゴリズムでは  
+非線形の決定境界を見つけることができない
+
+ロジスティック回帰と線形の決定境界は今回の場合、全く使い物にならない  
+クラス0がクラス1よりも多く出現する以上の情報を扱わないモデルになってしまう
+
+### SVMを使ってみる
+```{r}
+library("e1071")
+svm.fit <- svm(Label ~ X + Y, data = df)
+svm.predictions <- ifelse(predict(svm.fit) > 0, 1, 0)
+mean(svm.predictions == df$Label)
+```
+
+ロジスティック回帰よりも性能がいいことが明らか  
+なぜいいのかをグラフで可視化
+```{r}
+library("reshape")
+# データセットにロジスティック回帰とSVMの結果を追加
+df <- cbind(df, data.frame(Logit = ifelse(predict(logit.fit) > 0, 1, 0),
+                           SVM = ifelse(predict(svm.fit) > 0, 1, 0)))
+# ggplotで扱いやすいようにデータを変換
+predictions <- melt(df, id.vars = c("X", "Y"))
+head(predictions)
+
+ggplot(predictions, aes(x = X, y = Y, color = factor(value))) +
+  geom_point() +
+  facet_grid(variable ~ .) + # variableの値ごとにグラフを作成
+  theme_bw()
+```
+
+ロジスティック回帰はデータの外側に決定境界を置いていて無意味な予測をしている  
+SVMではデータの外側に奇妙な挙動があるもののデータの形状をとらえられている
+
+カーネルトリックによってこれを実現している  
+カーネルトリックではデータセットを新しい空間に移動させて決定境界を線形で扱えるようにしている  
+この変換はカーネルという関数のみに依存する
+
+カーネルトリックの詳しいことは数学を勉強すること
+
+### 様々なカーネル関数で試してみる
+kernel引数で指定できる
+* linear(線形)
+* polynomial(多項式)
+* radial(ガウス)
+* sigmoid(シグモイド)
+
+が選択できる
+```{r}
+# 元のデータに戻す
+df <- df[, c("X", "Y", "Label")]
+
+linear.svm.fit <- svm(Label ~ X + Y, data = df, kernel = "linear")
+linear.svm.predict <- ifelse(predict(linear.svm.fit) > 0, 1, 0)
+mean(df$Label == linear.svm.predict)
+
+polynomial.svm.fit <- svm(Label ~ X + Y, data = df, kernel = "polynomial")
+polynomial.svm.predict <- ifelse(predict(polynomial.svm.fit) > 0, 1, 0)
+mean(df$Label == polynomial.svm.predict)
+
+radial.svm.fit <- svm(Label ~ X + Y, data = df, kernel = "radial")
+radial.svm.predict <- ifelse(predict(radial.svm.fit) > 0, 1, 0)
+mean(df$Label == radial.svm.predict)
+
+sigmoid.svm.fit <- svm(Label ~ X + Y, data = df, kernel = "sigmoid")
+sigmoid.svm.predict <- ifelse(predict(sigmoid.svm.fit) > 0, 1, 0)
+mean(df$Label == sigmoid.svm.predict)
+
+df <- cbind(df, data.frame(LinearSVM = linear.svm.predict,
+                           PolynomialSVM = polynomial.svm.predict,
+                           RadialSVM = radial.svm.predict,
+                           SigmoidSVM = sigmoid.svm.predict))
+predictions <- melt(df, id.vars = c("X", "Y"))
+
+ggplot(predictions, aes(x = X, y = Y, color = factor(value))) +
+  geom_point() +
+  facet_grid(variable ~ .) +
+  theme_bw()
+```
+
+線形カーネルと多項式カーネルはロジスティック回帰と似た結果になっている  
+ガウスカーネルは正解に近い決定境界を生成している  
+シグモイドカーネルは奇妙な決定境界を作り出している
+
+様々なデータについて適用させてみるともっと良い予測ができる
+
+### ハイパーパラメータの調整
+SVMではパイパーパラメータを調整できる  
+初期状態ではうまくいかないことが多い
+
+#### 多項式カーネル
+degreeを渡すことで次数をハイパーパラメータとして設定できる
+
+degreeを3から5にしても予測の結果に影響がない(初期設定は3)  
+10や12にすることで変化が起きている
+```{r}
+polynomial.degree3.svm.fit <- svm(Label ~ X + Y, data = df, kernel = "polynomial", degree = 3)
+polynomial.degree3.svm.predict <- ifelse(predict(polynomial.degree3.svm.fit) > 0, 1, 0)
+mean(df$Label == polynomial.degree3.svm.predict)
+
+polynomial.degree5.svm.fit <- svm(Label ~ X + Y, data = df, kernel = "polynomial", degree = 5)
+polynomial.degree5.svm.predict <- ifelse(predict(polynomial.degree5.svm.fit) > 0, 1, 0)
+mean(df$Label == polynomial.degree5.svm.predict)
+
+polynomial.degree10.svm.fit <- svm(Label ~ X + Y, data = df, kernel = "polynomial", degree = 10)
+polynomial.degree10.svm.predict <- ifelse(predict(polynomial.degree10.svm.fit) > 0, 1, 0)
+mean(df$Label == polynomial.degree10.svm.predict)
+
+polynomial.degree12.svm.fit <- svm(Label ~ X + Y, data = df, kernel = "polynomial", degree = 12)
+polynomial.degree12.svm.predict <- ifelse(predict(polynomial.degree12.svm.fit) > 0, 1, 0)
+mean(df$Label == polynomial.degree12.svm.predict)
+
+# 数値の変化を可視化して確かめる
+df <- df[, c("X", "Y", "Label")]
+df <- cbind(df, data.frame(Degree3SVM = polynomial.degree3.svm.predict,
+                           Degree5SVM = polynomial.degree5.svm.predict,
+                           Degree10SVM = polynomial.degree10.svm.predict,
+                           Degree12SVM = polynomial.degree12.svm.predict))
+predictions <- melt(df, id.vars = c("X", "Y"))
+ggplot(predictions, aes(x = X, y = Y, color = factor(value))) +
+  geom_point() +
+  facet_grid(variable ~ .) + 
+  theme_bw()
+```
+
+次数が大きいほど質が改善している  
+ただしこのようなやり方は小手先の技術なので、本当の意味でのデータの構造をとらえたやり方ではない
+
+また、モデルの構築が次数が大きくなるほど遅くなる  
+さらに、過学習の問題も現れ始める
+
+多項式カーネルの次数を決める場合は交差検定似寄る実験が必要となる  
+多項式カーネルはSVMの重要な道具だが、実際にいろいろ調整しないとうまく行くとは限らない
+
+#### cost
+全てのカーネルに適用できるパラメータ
+
+ガウスカーネルを使って試してみる  
+また、誤った数のカウントではなく、今回からは予測に成功したデータ数をカウントする  
+実際に興味があるのは悪いモデルがどれだけ酷いかではなく良いモデルがどれかであるため
+```{r}
+radial.cost1.svm.fit <- svm(Label ~ X + Y, data = df, kernel = "radial", cost = 1)
+radial.cost1.svm.predict <- ifelse(predict(radial.cost1.svm.fit) > 0, 1, 0)
+mean(df$Label == radial.cost1.svm.predict)
+
+radial.cost2.svm.fit <- svm(Label ~ X + Y, data = df, kernel = "radial", cost = 2)
+radial.cost2.svm.predict <- ifelse(predict(radial.cost2.svm.fit) > 0, 1, 0)
+mean(df$Label == radial.cost2.svm.predict)
+
+radial.cost3.svm.fit <- svm(Label ~ X + Y, data = df, kernel = "radial", cost = 3)
+radial.cost3.svm.predict <- ifelse(predict(radial.cost3.svm.fit) > 0, 1, 0)
+mean(df$Label == radial.cost3.svm.predict)
+
+radial.cost4.svm.fit <- svm(Label ~ X + Y, data = df, kernel = "radial", cost = 4)
+radial.cost4.svm.predict <- ifelse(predict(radial.cost4.svm.fit) > 0, 1, 0)
+mean(df$Label == radial.cost4.svm.predict)
+```
+コストを上げると当てはまりが悪くなる  
+lambdaと同じ正則化の強さを表すハイパーパラメータ
+
+コストを増やすと訓練データへの当てはまりが悪くなる  
+正則化によって精度が改善する可能性もあるので、常に交差検定をする必要がある
+
+モデルを可視化する
+```{r}
+df <- df[, c("X", "Y", "Label")]
+df <- cbind(df, data.frame(Cost1SVM = radial.cost1.svm.predict,
+                           Cost2SVM = radial.cost2.svm.predict,
+                           Cost3SVM = radial.cost3.svm.predict,
+                           Cost4SVM = radial.cost4.svm.predict))
+predictions <- melt(df, id.vars = c("X", "Y"))
+ggplot(predictions, aes(x = X, y = Y, color = factor(value))) +
+  geom_point() +
+  facet_grid(variable ~ .) +
+  theme_bw()
+```
+コストを増加させるごとに外側が変化していく  
+増加させると決定境界は線形に近くなっていく
+
+#### gamma
+gammaはイパーパラメータをシグモイドカーネルで使ってみる
+```{r}
+df <- df[, c("X", "Y", "Label")]
+for (i in 1:4) {
+  sigmoid.gamma.svm.fit <- svm(Label ~ X + Y, data = df, kernel = "sigmoid", gamma = i)
+  sigmaid.gamma.svm.predict <- ifelse(predict(sigmoid.gamma.svm.fit) > 0, 1, 0)
+  print(mean(df$Label == sigmaid.gamma.svm.predict))
+  df <- cbind(df, sigmaid.gamma.svm.predict)
+}
+names(df) <- c("X", "Y", "Label", "Gamma1SVM", "Gamma2SVM", "Gamma3SVM", "Gamma4SVM")
+predictions <- melt(df, id.vars = c("X", "Y"))
+ggplot(predictions, aes(x = X, y = Y, color = factor(value))) +
+  geom_point() +
+  facet_grid(variable ~ .) +
+  theme_bw()
+```
+ガンマを増加させるとモデルの性能は少し良くなっている  
+シグモイドカーネルによって選ばれた複雑な決定境界が値を変えるごとに歪んでいる
+
+何が起こっているか詳細はより多くの値を調べてみると分かる
+
+
+## アルゴリズムを比較する
+SpamAssassinのデータでSVM, ロジスティック回帰, kNNを比較  
+
+どのデータに対してどのアルゴリズムがよく当てはまるかを事前に知ることはできないので、  
+実データに複数のアルゴリズムを使って比較してみるのはよい習慣
+
+経験豊富な専門家はアルゴリズムをhがうまく動作しないときに  
+データ構造から原因を読み解けるのが初心者との大きな違い
+
+この直感を養うには出会ったデータにいろいろなアルゴリズムを適用させてみて、  
+失敗する感覚を身につけるのがよい
+
+### データの読み込み
+既に作業済みなので、load関数を使って処理済みの文章単語行列を読み込む  
+load関数はバイナリ形式で保存されたRのデータを読み込む関数
+```{r}
+load("data/dtm.RData")
+
+set.seed(1)
+# ランダムにインデックスの半分をトレーニングデータとして取得
+training.indices <- sort(sample(1:nrow(dtm), round(0.5 * nrow(dtm))))
+# training.indicesに含まれていないものindexを取得
+test.indices <- which(!1:nrow(dtm) %in% training.indices)
+
+# 3列目以降が各タームの出現回数
+train.x <- dtm[training.indices, 3:ncol(dtm)]
+# 1列目は正解ラベル
+train.y <- dtm[training.indices, 1]
+test.x <- dtm[test.indices, 3:ncol(dtm)]
+test.y <- dtm[test.indices, 1]
+
+# 読み込んだデータはいらないのでメモリから解法
+rm(dtm)
+```
+
+### ロジスティック回帰
+今回は簡略化のため、交差検定ではなく、トレーニングデータとテストデータに対して最適なlambdaを求めている  
+厳密にモデルを検証したいときは簡略化すべきではない
+```{r}
+library("glmnet")
+regularized.logit.fit <- glmnet(train.x, train.y, family = c("binomial"))
+
+lambdas <- regularized.logit.fit$lambda
+performance <- data.frame()
+
+# lambdaごとにテストデータでのMSEを使って予測精度を検証
+for (lambda in lambdas) {
+  predictions <- predict(regularized.logit.fit, test.x, s = lambda)
+  predictions <- as.numeric(predictions > 0)
+  mse <- mean(predictions != test.y)
+  
+  performance <- rbind(performance, data.frame(Lambda = lambda, MSE = mse))
+}
+
+# lambdaが最も低い位置があるかを確認
+ggplot(performance, aes(x = Lambda, y = MSE)) +
+  geom_point() + 
+  scale_x_log10() + 
+  theme_bw()
+
+# 最小値となるlambdaが複数あるので、maxを使って高い方を取り出している
+# lambdaが大きい方が強い正則化となるため
+best.lambda <- max(performance$Lambda[which(performance$MSE == min(performance$MSE))])
+# MSEの最用地
+mse <- subset(performance, performance$Lambda == best.lambda)$MSE
+```
+正則化付きロジスティック回帰ではパラメータの調整は少ないが、  
+今回のテストセットのうち6%しか誤分類していない
+
+### 線形カーネルSVM
+線形カーネルSVMはデータセットが大きいと処理が遅くなるので、  
+今回はハイパーパラメータはデフォルト値を使う  
+必ずしやこれが最適とは限らないが、よく行われる
+
+特定のモデル構築に多くの時間を割くと性能の違いの一部は構造の違いではなく努力の量に依存していまう
+```{r}
+linear.svm.fit <- svm(train.x, train.y, kernel = "linear")
+predictions <- predict(linear.svm.fit, test.x)
+predictions <- as.numeric(predictions > 0)
+mse <- mean(predictions != test.y)
+mse
+```
+ロジスティック回帰より誤分類が多い
+実際には線形カーネルの限界を知るためには、  
+コストを変えて理想的な誤り率を知る必要がある  
+
+### ガウスカーネル
+可視化の難しい実応用でどのように影響するか
+```{r}
+radial.svm.fit <- svm(train.x, train.y, kernel = "radial")
+predictions <- predict(radial.svm.fit, test.x)
+predictions <- as.numeric(predictions > 0)
+mse <- mean(predictions != test.y)
+mse
+```
+最初の非線形な例と異なり、線形カーネルよりも性能が悪くなった  
+理想的なモデルは問題の構造に依存する
+
+より多くのデータに取り組むことで分かった例  
+この問題の場合、決定境界が線形に近いことを示唆している
+
+ロジスティック回帰が線形カーネルSVMやガウスカーネルSVMよりも優れている点からも推察できる  
+モデルの失敗によってデータの真の構造について知見が得られる
+
+### kNN
+```{r}
+library(class)
+# k = 50でやってみる
+knn.fit <- knn(train.x, test.x, train.y, k = 50)
+predictions <- as.numeric(as.character(knn.fit))
+mse <- mean(predictions != test.y)
+mse
+```
+誤り率はガウスカーネルSVMと同等程度  
+このとこからもスパム分類において、線形分類器が非線形モデルより適していることがわかる
+
+時間がかからないのでkの値を変えて性能の変化を確かめる
+```{r}
+performance <- data.frame()
+for (k in seq(5, 50, by = 5)) {
+  knn.fit <- knn(train.x, test.x, train.y, k = k)
+  predictions <- as.numeric(as.character(knn.fit))
+  mse <- mean(predictions != test.y)
+  performance <- rbind(performance, data.frame(K = k, MSE = mse))
+}
+
+best.k <- performance$K[which(performance$MSE == min(performance$MSE))]
+best.mse <- performance[performance$K == best.k, "MSE"]
+best.mse
+```
+チューニングでSVMとロジスティックの中間くらいまでの性能にはなった
+
+### ここまでのまとめ
+ロジスティック回帰の正則化パラメータを調整した上で使うのが最もよい結果となった  
+合理的な結論であり、実際スパムフィルタもナイーブベイズよりロジスティック回帰に切り替えられてきている  
+理由は分からないが、この問題にはロジスティック回帰がうまく当てはまる
+
+ここから得られる教訓
+1. 実際のデータに取り組むときは複数のアルゴリズムを使うべき  
+特にRの場合それが簡単に実験できる
+2. うまくいくアルゴリズムは問題に依存する
+3. モデルの性能はデータ構造だけでなくハイパーパラメータの設定にかけた努力量にも影響する  
+ハイパーパラメータの設定は大事
+
+今回扱った問題のハイパーパラメータを規則的に調整して交差検定で評価してみるとよい
+
+また、今回扱わなかった多項式カーネルやシグモイドカーネルをスパム分類に適用することで  
+実験経験とそれらがどのような性能を発揮するかの評価方法も学ぶことができる
